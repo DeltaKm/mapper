@@ -1,0 +1,32 @@
+// schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+
+
+model Data {
+  id          String        @id @default(auto()) @map("_id") @db.ObjectId
+  content     Json
+  createdAt   DateTime      @default(now())
+  // (Opzionale) Se vuoi avere il back reference dei log collegati a questo record:
+  requestLogs RequestLog[]
+}
+
+model RequestLog {
+  id        String    @id @default(auto()) @map("_id") @db.ObjectId
+  method    String
+  url       String
+  dataId    String?   @db.ObjectId
+  data      Data?     @relation(fields: [dataId], references: [id])
+  headers   Json?
+  status    Int?      // codice di stato HTTP della risposta
+  error     String?   // messaggio d'errore (se presente)
+  createdAt DateTime  @default(now())
+}
