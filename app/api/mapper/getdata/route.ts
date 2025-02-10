@@ -4,13 +4,12 @@ import prisma from "@/app/lib/prisma";
 
 export async function GET() {
   try {
-    // Recupera tutti i record del modello Data, ordinati per createdAt decrescente
     const dataRecords = await prisma.data.findMany({
       orderBy: { createdAt: 'desc' },
     });
     
     return NextResponse.json({
-      success: true,
+      status: "success", 
       data: dataRecords,
     });
   } catch (error) {

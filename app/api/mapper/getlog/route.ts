@@ -5,13 +5,12 @@ import prisma from "@/app/lib/prisma";
 
 export async function GET() {
   try {
-    // Recupera tutti i record del modello RequestLog, ordinati per createdAt decrescente
     const logRecords = await prisma.requestLog.findMany({
       orderBy: { createdAt: 'desc' },
     });
     
     return NextResponse.json({
-      success: true,
+      status: "success", 
       logs: logRecords,
     });
   } catch (error) {

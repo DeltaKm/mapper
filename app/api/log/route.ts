@@ -1,8 +1,6 @@
-// app/api/log/route.ts
 import { NextResponse } from 'next/server';
 import prisma from "@/app/lib/prisma";
 
-// Inizializza un'istanza di Prisma (usa un singleton se necessario)
 
 
 export async function POST(request: Request) {
@@ -13,10 +11,9 @@ export async function POST(request: Request) {
       data: {
         method,
         url,
-        headers, // verrà salvato come JSON
+        headers, 
         status,
         error,
-        // dataId rimane null in questo caso; puoi impostarlo se hai un riferimento a un record in Data
         dataId: null,
       },
     });

@@ -15,7 +15,6 @@ model Data {
   id          String        @id @default(auto()) @map("_id") @db.ObjectId
   content     Json
   createdAt   DateTime      @default(now())
-  // (Opzionale) Se vuoi avere il back reference dei log collegati a questo record:
   requestLogs RequestLog[]
 }
 
@@ -26,7 +25,7 @@ model RequestLog {
   dataId    String?   @db.ObjectId
   data      Data?     @relation(fields: [dataId], references: [id])
   headers   Json?
-  status    Int?      // codice di stato HTTP della risposta
-  error     String?   // messaggio d'errore (se presente)
+  status    Int?      
+  error     String?   
   createdAt DateTime  @default(now())
 }

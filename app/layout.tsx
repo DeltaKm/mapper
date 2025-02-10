@@ -26,7 +26,6 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={`${geistSans.variable} ${geistMono.variable}`}>
-      {/* <link rel="icon" href="/favicon.png" sizes="any" /> */}
         {children}
       </body>
     </html>

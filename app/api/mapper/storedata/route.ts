@@ -14,11 +14,9 @@ export async function POST(request: NextRequest) {
     let statusCode = StatusCodes.Created;
     let errorMessage: string | null = null;
     
-    try {
-      // Parsifica il body della richiesta in formato JSON
-      const body = await request.json();
-      
-      // Prova a salvare i dati nel modello Data
+    try {     
+      const body = await request.json();    
+    
       savedData = await prisma.data.create({
         data: { content: body },
       });
@@ -28,13 +26,13 @@ export async function POST(request: NextRequest) {
       errorMessage = error instanceof Error ? error.message : "Errore sconosciuto";
     }
     
-    // Registra il log della richiesta, sempre (sia in caso di successo che di errore)
+   
     try {
       await prisma.requestLog.create({
         data: {
           method: request.method,
           url: request.nextUrl.toString(),
-          // Se il salvataggio dei dati ha avuto successo, collega l'ID, altrimenti null
+        
           dataId: savedData ? savedData.id : null,
           headers: Object.fromEntries(request.headers.entries()),
           status: statusCode,
@@ -42,11 +40,11 @@ export async function POST(request: NextRequest) {
         },
       });
     } catch (logError) {
-      // Se il log non riesce, stampalo in console per il debug
+   
       console.error("Errore durante la registrazione del log:", logError);
     }
     
-    // Rispondi in base all'esito della creazione dei dati
+
     if (statusCode === StatusCodes.Created) {
       return NextResponse.json(
         { status: "success", savedData },
