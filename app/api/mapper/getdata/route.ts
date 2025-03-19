@@ -1,22 +1,37 @@
-import { NextResponse } from 'next/server';
-
+import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/app/lib/prisma";
 
-export async function GET() {
+enum StatusCodes {
+  Success = 200,
+  NotFound = 404,
+  MethodNotAllowed = 405,
+  InternalServerError = 500,
+}
+
+export async function GET(request: NextRequest) {
   try {
-    const dataRecords = await prisma.data.findMany({
-      orderBy: { createdAt: 'desc' },
-    });
-    
-    return NextResponse.json({
-      status: "success", 
-      data: dataRecords,
-    });
+    const id = request.nextUrl.searchParams.get("id");
+
+    if (id) {
+      const data = await prisma.data.findUnique({ where: { id } });
+      if (!data) {
+        return NextResponse.json(
+          { message: "id non trovato" },
+          { status: StatusCodes.NotFound }
+        );
+      }
+      return NextResponse.json(data, { status: StatusCodes.Success });
+    } else {
+      return NextResponse.json(
+        { message: "Errore durante il fetch dei dati, inserire id in query param" },
+        { status: StatusCodes.MethodNotAllowed }
+      );      
+    }
   } catch (error) {
-    console.error('Errore nel recupero dei dati:', error);
+    console.error("Errore durante il fetch dei dati", error);
     return NextResponse.json(
-      { error: 'Errore nel recupero dei dati' },
-      { status: 500 }
+      { message: "Errore durante il fetch dei dati" },
+      { status: StatusCodes.InternalServerError }
     );
   }
 }

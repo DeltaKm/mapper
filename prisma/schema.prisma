@@ -1,4 +1,3 @@
-// schema.prisma
 
 generator client {
   provider = "prisma-client-js"
@@ -9,23 +8,185 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-
-
 model Data {
-  id          String        @id @default(auto()) @map("_id") @db.ObjectId
+  id          String       @id @default(auto()) @map("_id") @db.ObjectId
   content     Json
-  createdAt   DateTime      @default(now())
+  createdAt   DateTime     @default(now())
   requestLogs RequestLog[]
 }
 
+model Customer {
+  id                              String   @id @default(auto()) @map("_id") @db.ObjectId // MongoDB usa un tipo `String` per l'ID
+  idReferenceGateway              String?  @default("")
+  idCustomer                      String?  @default("")
+  gender                          String?  @default("")
+  name                            String?  @default("")
+  surname                         String?  @default("")
+  birth_data                      DateTime
+  vat_number                      String?  @default("")
+  residence_address               String?  @default("")
+  residence_zipcode               String?  @default("")
+  residence_city                  String?  @default("")
+  residence_province              String?  @default("")
+  residence_region                String?  @default("")
+  residence_state                 String?  @default("")
+  domicile_address                String?  @default("")
+  domicile_zipcode                String?  @default("")
+  domicile_city                   String?  @default("")
+  domicile_province               String?  @default("")
+  domicile_region                 String?  @default("")
+  domicile_state                  String?  @default("")
+  mobile                          String?  @default("")
+  email                           String?  @default("")
+  publicCode                      String?  @default("")
+  subscriber                      String?  @default("")
+  arrived_from                    String?  @default("")
+  fidelity_card_number            String?  @default("")
+  consent_marketing               String? @default("")
+  consent_third_parties_marketing String? @default("")
+  dateCreation                    DateTime 
+  dateLastUpdate                  DateTime
+  deleted                         String?  @default("")
+  restaurant_code                 String?  @default("")
+  subscriber_code                 String?  @default("")
+  createdAt                       DateTime @default(now())
+  updateAt                        DateTime @updatedAt
+}
+
+
 model RequestLog {
-  id        String    @id @default(auto()) @map("_id") @db.ObjectId
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
   method    String
   url       String
-  dataId    String?   @db.ObjectId
-  data      Data?     @relation(fields: [dataId], references: [id])
+  dataId    String?  @db.ObjectId
+  data      Data?    @relation(fields: [dataId], references: [id])
   headers   Json?
-  status    Int?      
-  error     String?   
-  createdAt DateTime  @default(now())
+  status    Int?
+  error     String?
+  createdAt DateTime @default(now())
+}
+
+// -_-' ???
+model TicketList {
+  id                  String                  @id @default(auto()) @map("_id") @db.ObjectId
+  restaurant_code     String
+  subscriber_code     String
+  DatiCLiente         DatiClienteType[]
+  CorrectionsList     CorrectionsListType[]
+  DetailFormPagList   DetailFormPagListType[]
+  DetailList          DetailFormPagListType[]
+  Cameriere           String
+  CodCamerire         String
+  CodiceConto         String
+  CodiceTipoServizio  String
+  DateBill            DateTime
+  DateJob             DateTime
+  DocAnno             Int
+  DocNumero           Int
+  DocTipo             String
+  Email               String
+  IDTickets           Int
+  IDBookingSubscriber String
+  IdCard              String
+  IdRestaurant        Int
+  IdSala              Int
+  IDTavolo            String
+  Name                String
+  NumeroCoperti       Int
+  Pagato              Float
+  PaymentMode         String
+  RestaurantCode      String
+  RecipientIssued     String
+  Sconto              Float
+  Servizio            Float
+  Status              Float
+  Subscirber          String
+  TipoOridne          Float
+  TipoUtilizzoConto   Float
+  Totoal              Float
+  createdAt           DateTime                @default(now())
+  updateAt            DateTime                @updatedAt
+}
+
+type CorrectionsListType {
+  value String // ???
+}
+
+type DatiClienteType {
+  TotaleFatturato Float
+}
+
+type DetailFormPagListType {
+  PagamentoSigla       String
+  PagamentoDescrizione String
+  Importo              Float
+  IdentificativoPOS    String
+}
+
+//ci manca orderWeb e in attesa che in seriscnao il campo arrived_from
+type DatailList {
+  ArticleNote         String
+  BillRow             Int
+  Cameriere           String
+  CodCamerire         String
+  CommPreparazione    String
+  Code                String
+  ContoSepID          Int
+  ContoSepName        String
+  DataAcquisizione    DateTime
+  GroupCode           String // da VALL IL TIPO Con Valerio
+  GroupDescription    String
+  IdentificazitvoPOS  String
+  Name                String
+  NSessioneComanda    String
+  OrderIDGateway      String
+  Peso                Float
+  Price               Float
+  Qta                 Float
+  Subscriber          String
+  Subscirber_RifOrder String
+  Terminale           String
+  TipoRec             String
+  arrived_from        String // per ora non arriva in questa lista
+}
+
+// query per dati nostri { "content.customerList" : {$exists:true}}
+// type anagrafica inviata da EasyAppear
+type customerListType {
+  idReferenceGateway String
+  idCustomer         String
+  idCustomerExt      String
+  gender             String
+  surname            String
+  brith_data         String
+  fiscal_code        String
+  business           String
+  residence_address  String
+  residence_zipcode  String
+  residence_city     String
+  residence_state    String
+  phone              String
+  email              String
+  publicCode         String
+  arrived_from       String
+  // avvisare perri di inviare i dati nel tipo coretto
+}
+
+model mkt {
+  id       String   @id @default(auto()) @map("_id") @db.ObjectId
+  dbUrl    String
+  config   String
+  cratedAt DateTime @default(now()) @db.Timestamp()
+  updateAt DateTime @updatedAt
+}
+
+type appCrossOriginUserId {
+  riff_app String
+  id_app   String
+}
+
+type product {
+  product     String[]
+  catergories String[]
+  attributes  String[]
 }

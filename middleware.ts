@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 
 const allowedOrigins = [ 
   'http://localhost:3000',
-  'consegnoio-data-api.vercel.app',
+  'https://eosmapper-416914793312.europe-west1.run.app',
   '*'
 ];
 
@@ -50,7 +50,8 @@ export async function middleware(req: NextRequest) {
   const apiKeyQuery = req.nextUrl.searchParams.get('apiKey');
   const apiKey = apiKeyHeader || apiKeyQuery;
 
-  console.log("Middleware: API Key ricevuta =", apiKey, "| API Key attesa =", process.env.NEXT_PUBLIC_API_KEY);
+  // dacambiare questo console log
+  // console.log("Middleware: API Key ricevuta =", apiKey, "| API Key attesa =", process.env.NEXT_PUBLIC_API_KEY);
 
   if (!apiKey || apiKey !== process.env.NEXT_PUBLIC_API_KEY) {
     await logUnauthorizedRequest(req, 401, "Non autorizzato: API Key non valida o mancante");
