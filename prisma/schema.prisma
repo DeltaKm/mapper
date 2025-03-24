@@ -1,4 +1,3 @@
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -12,6 +11,7 @@ model Data {
   id          String       @id @default(auto()) @map("_id") @db.ObjectId
   content     Json
   createdAt   DateTime     @default(now())
+  createdAtIta    String?
   requestLogs RequestLog[]
 }
 
@@ -22,7 +22,7 @@ model Customer {
   gender                          String?  @default("")
   name                            String?  @default("")
   surname                         String?  @default("")
-  birth_data                      DateTime
+  birth_data                      String? @default("")
   vat_number                      String?  @default("")
   residence_address               String?  @default("")
   residence_zipcode               String?  @default("")
@@ -42,17 +42,16 @@ model Customer {
   subscriber                      String?  @default("")
   arrived_from                    String?  @default("")
   fidelity_card_number            String?  @default("")
-  consent_marketing               String? @default("")
-  consent_third_parties_marketing String? @default("")
-  dateCreation                    DateTime 
-  dateLastUpdate                  DateTime
+  consent_marketing               String?  @default("")
+  consent_third_parties_marketing String?  @default("")
+  dateCreation                    String? @default("")
+  dateLastUpdate                  String? @default("")
   deleted                         String?  @default("")
   restaurant_code                 String?  @default("")
   subscriber_code                 String?  @default("")
   createdAt                       DateTime @default(now())
   updateAt                        DateTime @updatedAt
 }
-
 
 model RequestLog {
   id        String   @id @default(auto()) @map("_id") @db.ObjectId
