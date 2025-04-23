@@ -47,23 +47,21 @@
 //     }
 
 
-//     // --- Salvataggio globale dei dati ricevuti ---
-//     savedData = await prisma.data.create({
-//       data: { 
-//         content,
-//         createdAt: italianDate,
-//         createdAtIta: italianDateString
+//     // savedData = await prisma.data.create({
+//     //   data: { 
+//     //     content,
+//     //     createdAt: italianDate,
+//     //     createdAtIta: italianDateString
 
-//       },
-//     });
-//     // --- Fine salvataggio globale ---
+//     //   },
+//     // });
 
 //     if (content.customerList && Array.isArray(content.customerList)) {
 //       const customerPromises = content.customerList.map(async (customer: any) => {
 //         const existingCustomer = await prisma.customer.findFirst({
 //           where: {
 //             idCustomer: customer.idCustomer,
-//             publicCode: customer.publicCode,
+//             arrived_from: customer.arrived_from,
 //           },
 //         });
 
@@ -103,14 +101,15 @@
 //         };
 
 //         if (existingCustomer) {
-//           await prisma.customer.delete({
+//           return await prisma.customer.update({
 //             where: { id: existingCustomer.id },
+//             data: customerData,
+//           });
+//         } else {
+//           return await prisma.customer.create({
+//             data: customerData,
 //           });
 //         }
-
-//         return await prisma.customer.create({
-//           data: customerData,
-//         });
 //       });
 
 //       await Promise.all(customerPromises);
@@ -134,6 +133,8 @@
 //     );
 //   }
 // }
+
+// c'è un problema sul campo fidelity nuumber, dobbiamo capire da dove proviene il problema, dal mapper, gateway o easyappear
 
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/app/lib/prisma";
