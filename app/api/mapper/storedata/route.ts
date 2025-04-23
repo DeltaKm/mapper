@@ -47,21 +47,23 @@
 //     }
 
 
-//     // savedData = await prisma.data.create({
-//     //   data: { 
-//     //     content,
-//     //     createdAt: italianDate,
-//     //     createdAtIta: italianDateString
+//     // --- Salvataggio globale dei dati ricevuti ---
+//     savedData = await prisma.data.create({
+//       data: { 
+//         content,
+//         createdAt: italianDate,
+//         createdAtIta: italianDateString
 
-//     //   },
-//     // });
+//       },
+//     });
+//     // --- Fine salvataggio globale ---
 
 //     if (content.customerList && Array.isArray(content.customerList)) {
 //       const customerPromises = content.customerList.map(async (customer: any) => {
 //         const existingCustomer = await prisma.customer.findFirst({
 //           where: {
 //             idCustomer: customer.idCustomer,
-//             arrived_from: customer.arrived_from,
+//             publicCode: customer.publicCode,
 //           },
 //         });
 
@@ -101,15 +103,14 @@
 //         };
 
 //         if (existingCustomer) {
-//           return await prisma.customer.update({
+//           await prisma.customer.delete({
 //             where: { id: existingCustomer.id },
-//             data: customerData,
-//           });
-//         } else {
-//           return await prisma.customer.create({
-//             data: customerData,
 //           });
 //         }
+
+//         return await prisma.customer.create({
+//           data: customerData,
+//         });
 //       });
 
 //       await Promise.all(customerPromises);
@@ -180,6 +181,17 @@ export async function POST(request: NextRequest) {
     if (subscriber_code !== null) {
       content.subscriber_code = subscriber_code;
     }
+
+    // --- Salvataggio globale dei dati ricevuti ---
+    savedData = await prisma.data.create({
+      data: { 
+        content,
+        createdAt: italianDate,
+        createdAtIta: italianDateString
+
+      },
+    });
+    // --- Fine salvataggio globale ---
 
     if (content.customerList && Array.isArray(content.customerList)) {
       const customerPromises = content.customerList.map(async (customer: any) => {
