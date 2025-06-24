@@ -194,6 +194,25 @@ export async function POST(request: NextRequest) {
     });
     // --- Fine salvataggio globale ---
 
+    // --- Gestione BillList ---
+    if (content.BillList && Array.isArray(content.BillList) && content.BillList.length > 0) {
+      console.log("BillList trovato, salvataggio in corso...");
+      
+      const billListPromises = content.BillList.map(async (bill: any) => {
+        return await prisma.billList.create({
+          data: {
+            billData: bill,
+            restaurant_code: content.restaurant_code || "",
+            subscriber_code: content.subscriber_code || "",
+          }
+        });
+      });
+
+      await Promise.all(billListPromises);
+      console.log(`Salvati ${content.BillList.length} record nella collezione BillList`);
+    }
+    // --- Fine gestione BillList ---
+
     if (content.customerList && Array.isArray(content.customerList)) {
       const customerPromises = content.customerList.map(async (customer: any) => {
         const existingCustomer = await prisma.customer.findFirst({

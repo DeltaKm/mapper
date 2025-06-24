@@ -189,3 +189,12 @@ type product {
   catergories String[]
   attributes  String[]
 }
+
+model BillList {
+  id              String    @id @default(auto()) @map("_id") @db.ObjectId
+  billData        Json    
+  restaurant_code String?  @default("")
+  subscriber_code String?  @default("")
+  createdAt       DateTime @default(now())
+  updateAt        DateTime @updatedAt
+}
