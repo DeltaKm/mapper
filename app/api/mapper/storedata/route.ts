@@ -192,26 +192,34 @@ export async function POST(request: NextRequest) {
 
       },
     });
-    // --- Fine salvataggio globale ---
-
-    // --- Gestione BillList ---
-    if (content.BillList && Array.isArray(content.BillList) && content.BillList.length > 0) {
-      console.log("BillList trovato, salvataggio in corso...");
+    // --- Verifica TicketList ---
+    if (content.TicketList && Array.isArray(content.TicketList) && content.TicketList.length > 0) {
+      console.log("TicketList trovato, procedendo con salvataggio separato...");
       
-      const billListPromises = content.BillList.map(async (bill: any) => {
-        return await prisma.billList.create({
-          data: {
-            billData: bill,
+      // Salva TicketList in una collezione separata usando l'API prisma.$runCommandRaw
+      for (const ticket of content.TicketList) {
+        // Usa direttamente l'API di MongoDB tramite Prisma
+        await prisma.$runCommandRaw({
+          insert: "TicketData", // Nome della collezione
+          documents: [{
+            ticketData: ticket,
             restaurant_code: content.restaurant_code || "",
             subscriber_code: content.subscriber_code || "",
-          }
+            createdAt: new Date(),
+            updateAt: new Date()
+          }]
         });
-      });
-
-      await Promise.all(billListPromises);
-      console.log(`Salvati ${content.BillList.length} record nella collezione BillList`);
+      }
+      
+      console.log(`Salvati ${content.TicketList.length} record nella collezione TicketData`);
+      
+      // Non salvare l'intero contenuto in Data
+      return NextResponse.json(
+        { status: "success", message: `Salvati ${content.TicketList.length} ticket nella collezione TicketData` },
+        { status: StatusCodes.Created }
+      );
     }
-    // --- Fine gestione BillList ---
+    // --- Fine verifica TicketList ---
 
     if (content.customerList && Array.isArray(content.customerList)) {
       const customerPromises = content.customerList.map(async (customer: any) => {

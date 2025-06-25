@@ -190,9 +190,9 @@ type product {
   attributes  String[]
 }
 
-model BillList {
+model TicketData {
   id              String    @id @default(auto()) @map("_id") @db.ObjectId
-  billData        Json    
+  ticketData      Json     // Contiene tutti i dati originali del ticket
   restaurant_code String?  @default("")
   subscriber_code String?  @default("")
   createdAt       DateTime @default(now())
