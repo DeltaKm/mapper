@@ -198,3 +198,13 @@ model TicketData {
   createdAt       DateTime @default(now())
   updateAt        DateTime @updatedAt
 }
+
+model ticketListBaccoDylogAPP {
+  id              String    @id @default(auto()) @map("_id") @db.ObjectId
+  ticketData      Json     // Contiene tutti i dati originali del ticket con OrderWebInfo
+  restaurant_code String?  @default("")
+  subscriber_code String   @default("DylogApp") // Sempre DylogApp
+  orderWebInfo    Json     // Contiene le informazioni dell'ordine web estratte
+  createdAt       DateTime @default(now())
+  updateAt        DateTime @updatedAt
+}

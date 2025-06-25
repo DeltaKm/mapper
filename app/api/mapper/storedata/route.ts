@@ -196,9 +196,11 @@ export async function POST(request: NextRequest) {
     if (content.TicketList && Array.isArray(content.TicketList) && content.TicketList.length > 0) {
       console.log("TicketList trovato, procedendo con salvataggio separato...");
       
+      let dylogAppTicketsCount = 0;
+      
       // Salva TicketList in una collezione separata usando l'API prisma.$runCommandRaw
       for (const ticket of content.TicketList) {
-        // Usa direttamente l'API di MongoDB tramite Prisma
+        // Salva in TicketData (per tutti i ticket)
         await prisma.$runCommandRaw({
           insert: "TicketData", // Nome della collezione
           documents: [{
@@ -209,13 +211,49 @@ export async function POST(request: NextRequest) {
             updateAt: new Date()
           }]
         });
+        
+        // Verifica se è un ticket di DylogApp con OrderWebInfo
+        const isDylogApp = content.subscriber_code === "DylogApp";
+        let hasOrderWebInfo = false;
+        let orderWebInfo = null;
+        
+        // Verifica se DetailList contiene OrderWebInfo
+        if (ticket.DetailList && Array.isArray(ticket.DetailList)) {
+          for (const detail of ticket.DetailList) {
+            if (detail.OrderWebInfo) {
+              hasOrderWebInfo = true;
+              orderWebInfo = detail.OrderWebInfo;
+              break;
+            }
+          }
+        }
+        
+        // Se è di DylogApp e ha OrderWebInfo, salva nella collezione specializzata
+        if (isDylogApp && hasOrderWebInfo) {
+          await prisma.$runCommandRaw({
+            insert: "ticketListBaccoDylogAPP", // Nome della collezione
+            documents: [{
+              ticketData: ticket,
+              restaurant_code: content.restaurant_code || "",
+              subscriber_code: "DylogApp",
+              orderWebInfo: orderWebInfo,
+              createdAt: new Date(),
+              updateAt: new Date()
+            }]
+          });
+          dylogAppTicketsCount++;
+        }
       }
       
-      console.log(`Salvati ${content.TicketList.length} record nella collezione TicketData`);
+      let successMessage = `Salvati ${content.TicketList.length} record nella collezione TicketData`;
+      if (dylogAppTicketsCount > 0) {
+        successMessage += `, di cui ${dylogAppTicketsCount} record salvati anche nella collezione ticketListBaccoDylogAPP`;
+      }
+      console.log(successMessage);
       
       // Non salvare l'intero contenuto in Data
       return NextResponse.json(
-        { status: "success", message: `Salvati ${content.TicketList.length} ticket nella collezione TicketData` },
+        { status: "success", message: successMessage },
         { status: StatusCodes.Created }
       );
     }
