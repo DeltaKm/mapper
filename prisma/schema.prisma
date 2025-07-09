@@ -8,11 +8,11 @@ datasource db {
 }
 
 model Data {
-  id          String       @id @default(auto()) @map("_id") @db.ObjectId
-  content     Json
-  createdAt   DateTime     @default(now())
-  createdAtIta    String?
-  requestLogs RequestLog[]
+  id           String       @id @default(auto()) @map("_id") @db.ObjectId
+  content      Json
+  createdAt    DateTime     @default(now())
+  createdAtIta String?
+  requestLogs  RequestLog[]
 }
 
 model Customer {
@@ -22,7 +22,7 @@ model Customer {
   gender                          String?  @default("")
   name                            String?  @default("")
   surname                         String?  @default("")
-  birth_data                      String? @default("")
+  birth_data                      String?  @default("")
   vat_number                      String?  @default("")
   residence_address               String?  @default("")
   residence_zipcode               String?  @default("")
@@ -44,8 +44,8 @@ model Customer {
   fidelity_card_number            String?  @default("")
   consent_marketing               String?  @default("")
   consent_third_parties_marketing String?  @default("")
-  dateCreation                    String? @default("")
-  dateLastUpdate                  String? @default("")
+  dateCreation                    String?  @default("")
+  dateLastUpdate                  String?  @default("")
   deleted                         String?  @default("")
   restaurant_code                 String?  @default("")
   subscriber_code                 String?  @default("")
@@ -191,20 +191,92 @@ type product {
 }
 
 model TicketData {
-  id              String    @id @default(auto()) @map("_id") @db.ObjectId
-  ticketData      Json     // Contiene tutti i dati originali del ticket
+  id              String   @id @default(auto()) @map("_id") @db.ObjectId
+  ticketData      Json
   restaurant_code String?  @default("")
   subscriber_code String?  @default("")
   createdAt       DateTime @default(now())
   updateAt        DateTime @updatedAt
 }
 
+// per i ticket di DylogApp / Bacco 
 model ticketListBaccoDylogAPP {
-  id              String    @id @default(auto()) @map("_id") @db.ObjectId
-  ticketData      Json     // Contiene tutti i dati originali del ticket con OrderWebInfo
+  id              String   @id @default(auto()) @map("_id") @db.ObjectId
+  ticketData      Json
   restaurant_code String?  @default("")
-  subscriber_code String   @default("DylogApp") // Sempre DylogApp
-  orderWebInfo    Json     // Contiene le informazioni dell'ordine web estratte
+  subscriber_code String   @default("DylogApp")
+  orderWebInfo    Json
   createdAt       DateTime @default(now())
   updateAt        DateTime @updatedAt
+}
+
+// Modello per dati di vendita standardizzati da diverse fonti
+model SalesData {
+  id                String    @id @default(auto()) @map("_id") @db.ObjectId
+  sourceType        String    // "signa" o "dylogapp"
+  sourceId          String    // ID di riferimento nel sistema di origine
+  
+  // Dati temporali (per filtri su date)
+  saleDate          DateTime  // Data della vendita standardizzata
+  
+  // Importi (per filtri su spesa)
+  totalAmount       Float     // Importo totale dell'ordine
+  
+  // Dati cliente (per filtri per cliente)
+  customerId        String?   // ID cliente standardizzato
+  fidelityCard      String?   // Carta fedeltà
+  
+  // Metadati
+  restaurant_code   String?   @default("")
+  subscriber_code   String?   @default("")
+  
+  // Dati specifici per fonte
+  sourceData        Json      // Dati originali in formato ridotto
+  
+  createdAt         DateTime  @default(now())
+  updateAt          DateTime  @updatedAt
+
+  // Indici per migliorare le prestazioni delle query
+  @@index([customerId, saleDate])
+  @@index([sourceType])
+  @@index([totalAmount])
+  @@index([restaurant_code])
+}
+
+// Metriche aggregate per cliente per analisi rapide
+model CustomerSalesSummary {
+  id                String    @id @default(auto()) @map("_id") @db.ObjectId
+  customerId        String    @unique // ID cliente (riferimento alla collezione Customer)
+  totalOrders       Int       // Numero totale di ordini
+  totalSpent        Float     // Importo totale speso
+  lastOrderDate     DateTime  // Data ultimo ordine
+  firstOrderDate    DateTime  // Data primo ordine
+  orderDates        Json      // Array di date degli ordini per calcolare frequenza
+  
+  // Metriche per origine
+  signaOrders       Int       @default(0)
+  signaSpent        Float     @default(0)
+  dylogappOrders    Int       @default(0)
+  dylogappSpent     Float     @default(0)
+  
+  restaurant_code   String?   @default("")
+  createdAt         DateTime  @default(now())
+  updateAt          DateTime  @updatedAt
+
+  // Indici per migliorare le prestazioni delle query
+  @@index([totalOrders])
+  @@index([totalSpent])
+  @@index([lastOrderDate])
+}
+
+// Modello per i dati grezzi dei movimenti Signa
+model SignaMovimenti {
+  id              String   @id @default(auto()) @map("_id") @db.ObjectId
+  movimentoData   Json
+  restaurant_code String?  @default("")
+  subscriber_code String?  @default("SIGNA")
+  createdAt       DateTime @default(now())
+  updateAt        DateTime @updatedAt
+  
+  @@index([restaurant_code])
 }
