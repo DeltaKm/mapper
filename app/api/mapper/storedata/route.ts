@@ -601,14 +601,16 @@ export async function POST(request: NextRequest) {
           const salesData = transformSignaMovimentoToSalesData(movimento, content, customer);
           
           if (salesData) {
+            // Assicuriamoci che customerId sia impostato se abbiamo un cliente
+            if (customer) {
+              salesData.customerId = customer.id;
+            }
+            
             salesDataRecords.push(salesData);
             
             // Aggiorna le metriche cliente
             if (customer) {
-              await updateCustomerSalesSummary({
-                ...salesData,
-                customerId: customer.id
-              });
+              await updateCustomerSalesSummary(salesData);
             }
           }
         } catch (error) {
@@ -619,6 +621,36 @@ export async function POST(request: NextRequest) {
       // Salva i record in SalesData
       if (salesDataRecords.length > 0) {
         try {
+          // Assicuriamoci che tutti i record abbiano il customerId corretto
+          // aggiornando quello che abbiamo eventualmente impostato durante updateCustomerSalesSummary
+          for (let i = 0; i < salesDataRecords.length; i++) {
+            const record = salesDataRecords[i];
+            // Se record ha fidelityCard ma non customerId, cerca di trovare il cliente
+            if (!record.customerId && (record.fidelityCard || (record.sourceData && record.sourceData.customerRef))) {
+              let customer = null;
+              
+              // Cerca per fidelity card
+              if (record.fidelityCard) {
+                customer = await prisma.customer.findFirst({
+                  where: { fidelity_card_number: record.fidelityCard }
+                });
+              }
+              
+              // Se non trovato per fidelity, cerca per customerRef
+              if (!customer && record.sourceData && record.sourceData.customerRef) {
+                customer = await prisma.customer.findFirst({
+                  where: { idCustomer: record.sourceData.customerRef }
+                });
+              }
+              
+              // Se troviamo il cliente, aggiorna il customerId
+              if (customer) {
+                salesDataRecords[i].customerId = customer.id;
+                console.log(`Cliente trovato per record di vendita: ${customer.id}`);
+              }
+            }
+          }
+          
           await prisma.$runCommandRaw({
             insert: "SalesData",
             documents: salesDataRecords.map(record => ({
