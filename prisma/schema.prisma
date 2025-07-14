@@ -280,3 +280,21 @@ model SignaMovimenti {
   
   @@index([restaurant_code])
 }
+
+model CustomerOrders {
+  id              String   @id @default(auto()) @map("_id") @db.ObjectId
+  idCustomer      String? @default("")
+  totalSpent      Float?   @default(0)
+  totalOrders     Int?     @default(0)
+  lastOrderDate   DateTime?
+  firstOrderDate  DateTime?
+  orderData       Json?
+  orderDates      Json?
+  restaurant_code String?  @default("")
+  createdAt       DateTime @default(now())
+  updateAt        DateTime @updatedAt
+
+  @@index([restaurant_code])
+  @@index([idCustomer])
+}
+  

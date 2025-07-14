@@ -139,6 +139,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/app/lib/prisma";
 import moment from "moment-timezone";
+import { updateCustomerOrders } from "@/app/lib/updateCustomerOrders";
 
 enum StatusCodes {
   Success = 200,
@@ -518,6 +519,10 @@ export async function POST(request: NextRequest) {
             // Aggiorna le metriche cliente
             if (customerId) {
               await updateCustomerSalesSummary(salesDataRecord);
+              
+              // Aggiorna CustomerOrders con il nuovo ordine
+              const idCustomer = orderWebInfo?.IDCustomer || null;
+              await updateCustomerOrders(salesDataRecord, idCustomer);
             }
           } catch (error) {
             console.error('Errore nella creazione del record SalesData per DylogApp:', error);
@@ -611,6 +616,10 @@ export async function POST(request: NextRequest) {
             // Aggiorna le metriche cliente
             if (customer) {
               await updateCustomerSalesSummary(salesData);
+              
+              // Aggiorna CustomerOrders con il nuovo ordine
+              const idCustomer = movimento.customer?.idCustomerExt || movimento.customer?.idCustomer || null;
+              await updateCustomerOrders(salesData, idCustomer);
             }
           }
         } catch (error) {

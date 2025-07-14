@@ -1,18 +1,44 @@
-// Script per correggere i dati SalesData esistenti che hanno customerId null
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
+// Script semplificato per correggere i dati SalesData esistenti che hanno customerId null
+// Questo script si concentra SOLO sull'aggiornamento del campo customerId in SalesData
+const { MongoClient, ObjectId } = require('mongodb');
+require('dotenv').config(); // Carica le variabili d'ambiente dal file .env
+
+// Recupera la connessione MongoDB dalla variabile d'ambiente
+const mongoUri = process.env.DATABASE_URL;
+if (!mongoUri) {
+  console.error('DATABASE_URL non definita nelle variabili di ambiente!');
+  process.exit(1);
+}
+
+// Estrai il nome del database dalla stringa di connessione
+let dbName = 'mapper';
+const dbNameMatch = mongoUri.match(/\/([^\/\?]+)(\?|$)/);
+if (dbNameMatch) {
+  dbName = dbNameMatch[1];
+}
+console.log(`Usando il database: ${dbName}`);
 
 async function fixSalesDataCustomerIds() {
   console.log("Avvio correzione dati SalesData...");
   
+  // Inizializza il client MongoDB
+  const client = new MongoClient(mongoUri);
+  
   try {
-    // 1. Ottieni tutti i record SalesData con customerId null
-    const salesDataWithNullCustomerId = await prisma.salesData.findMany({
-      where: {
-        customerId: null
-      }
-    });
+    // Connessione al database
+    await client.connect();
+    console.log(`Connesso al database MongoDB: ${mongoUri.replace(/:[^:]*@/, ':****@')}`); // Nascondi la password
     
+    const db = client.db(dbName);
+    const salesDataCollection = db.collection('SalesData');
+    const customerCollection = db.collection('Customer');
+    
+    // 1. Ottieni tutti i record SalesData con customerId null
+    const salesDataWithNullCustomerId = await salesDataCollection
+      .find({ customerId: null })
+      .limit(1000)
+      .toArray();
+      
     console.log(`Trovati ${salesDataWithNullCustomerId.length} record SalesData con customerId null`);
     
     let updatedCount = 0;
@@ -22,98 +48,54 @@ async function fixSalesDataCustomerIds() {
       let customer = null;
       
       // Cerca per fidelity card
-      if (record.fidelityCard) {
-        customer = await prisma.customer.findFirst({
-          where: { fidelity_card_number: record.fidelityCard }
-        });
-        
-        if (customer) {
-          console.log(`Cliente trovato tramite fidelityCard: ${record.fidelityCard}`);
+      if (record.fidelityCard && typeof record.fidelityCard === 'string' && record.fidelityCard.trim() !== '') {
+        try {
+          customer = await customerCollection.findOne({
+            fidelity_card_number: record.fidelityCard
+          });
+          
+          if (customer) {
+            console.log(`Cliente trovato tramite fidelityCard: ${record.fidelityCard}`);
+          }
+        } catch (e) {
+          console.log(`Errore nella ricerca cliente per fidelityCard: ${e.message}`);
         }
       }
       
       // Se non trovato per fidelity, cerca per customerRef
       if (!customer && record.sourceData && record.sourceData.customerRef) {
-        customer = await prisma.customer.findFirst({
-          where: { idCustomer: record.sourceData.customerRef }
-        });
-        
-        if (customer) {
-          console.log(`Cliente trovato tramite customerRef: ${record.sourceData.customerRef}`);
+        try {
+          customer = await customerCollection.findOne({
+            idCustomer: record.sourceData.customerRef
+          });
+          
+          if (customer) {
+            console.log(`Cliente trovato tramite customerRef: ${record.sourceData.customerRef}`);
+          }
+        } catch (e) {
+          console.log(`Errore nella ricerca cliente per customerRef: ${e.message}`);
         }
       }
       
       // Se troviamo il cliente, aggiorna il record
       if (customer) {
-        await prisma.salesData.update({
-          where: { id: record.id },
-          data: { customerId: customer.id }
-        });
-        
-        // Aggiorniamo anche CustomerSalesSummary
-        const existingSummary = await prisma.customerSalesSummary.findFirst({
-          where: { customerId: customer.id }
-        });
-        
-        if (existingSummary) {
-          // Aggiorna le metriche esistenti
-          const orderDates = existingSummary.orderDates || [];
-          orderDates.push(record.saleDate);
+        try {
+          // Estrai l'ID del cliente
+          const customerId = customer._id.toString(); // MongoDB memorizza gli ID come ObjectId, li convertiamo in string
           
-          // Aggiorna i conteggi per tipo di fonte
-          const signaOrders = record.sourceType === "signa" ? 
-            (existingSummary.signaOrders || 0) + 1 : (existingSummary.signaOrders || 0);
-          const signaSpent = record.sourceType === "signa" ? 
-            (existingSummary.signaSpent || 0) + record.totalAmount : (existingSummary.signaSpent || 0);
+          // Aggiorna solo il campo customerId
+          const result = await salesDataCollection.updateOne(
+            { _id: record._id },
+            { $set: { customerId: customerId } }
+          );
           
-          const dylogappOrders = record.sourceType === "dylogapp" ? 
-            (existingSummary.dylogappOrders || 0) + 1 : (existingSummary.dylogappOrders || 0);
-          const dylogappSpent = record.sourceType === "dylogapp" ? 
-            (existingSummary.dylogappSpent || 0) + record.totalAmount : (existingSummary.dylogappSpent || 0);
-          
-          await prisma.customerSalesSummary.update({
-            where: { id: existingSummary.id },
-            data: {
-              totalOrders: (existingSummary.totalOrders || 0) + 1,
-              totalSpent: (existingSummary.totalSpent || 0) + record.totalAmount,
-              lastOrderDate: record.saleDate > existingSummary.lastOrderDate ? 
-                record.saleDate : existingSummary.lastOrderDate,
-              orderDates: orderDates,
-              signaOrders,
-              signaSpent,
-              dylogappOrders,
-              dylogappSpent,
-              updateAt: new Date()
-            }
-          });
-        } else {
-          // Crea nuove metriche
-          const orderDates = [record.saleDate];
-          const signaOrders = record.sourceType === "signa" ? 1 : 0;
-          const signaSpent = record.sourceType === "signa" ? record.totalAmount : 0;
-          const dylogappOrders = record.sourceType === "dylogapp" ? 1 : 0;
-          const dylogappSpent = record.sourceType === "dylogapp" ? record.totalAmount : 0;
-          
-          await prisma.customerSalesSummary.create({
-            data: {
-              customerId: customer.id,
-              totalOrders: 1,
-              totalSpent: record.totalAmount,
-              firstOrderDate: record.saleDate,
-              lastOrderDate: record.saleDate,
-              orderDates: orderDates,
-              signaOrders,
-              signaSpent,
-              dylogappOrders,
-              dylogappSpent,
-              restaurant_code: record.restaurant_code || "",
-              createdAt: new Date(),
-              updateAt: new Date()
-            }
-          });
+          if (result.modifiedCount > 0) {
+            updatedCount++;
+            console.log(`Record aggiornato con successo: ${record._id}`);
+          }
+        } catch (updateError) {
+          console.error(`Errore nell'aggiornamento del record ${record._id}:`, updateError);
         }
-        
-        updatedCount++;
       }
     }
     
@@ -123,7 +105,8 @@ async function fixSalesDataCustomerIds() {
   } catch (error) {
     console.error('Errore durante la correzione dei dati:', error);
   } finally {
-    await prisma.$disconnect();
+    await client.close();
+    console.log('Connessione al database chiusa');
   }
 }
 
