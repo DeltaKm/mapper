@@ -501,11 +501,8 @@ export async function POST(request: NextRequest) {
               }
             }
             
-            // Calcola l'importo totale
+            // Calcola l'importo totale direttamente dai prodotti estratti
             let totalAmount = 0;
-            if (ticket.Totoal) {
-              totalAmount = parseFloat(ticket.Totoal.toString());
-            }
             
             // Estrai i dettagli dei prodotti da DetailList
             const productItems = [];
@@ -513,19 +510,26 @@ export async function POST(request: NextRequest) {
               for (const detail of ticket.DetailList) {
                 // Verifica che ci siano i campi necessari (Name/Code e Price e Qta)
                 if ((detail.Name || detail.Code) && detail.Price !== undefined && detail.Qta !== undefined) {
+                  const quantity = parseFloat(detail.Qta.toString()) || 0;
+                  const price = parseFloat(detail.Price.toString()) || 0;
+                  const itemTotalPrice = quantity * price;
+                  
+                  // Aggiungi al totale
+                  totalAmount += itemTotalPrice;
+                  
                   productItems.push({
                     id: detail.Code || '',
                     description: detail.Name || '',
-                    quantity: parseFloat(detail.Qta.toString()) || 0,
-                    price: parseFloat(detail.Price.toString()) || 0,
-                    totalPrice: (parseFloat(detail.Qta.toString()) || 0) * (parseFloat(detail.Price.toString()) || 0),
+                    quantity: quantity,
+                    price: price,
+                    totalPrice: itemTotalPrice,
                     category: detail.GroupDescription || ''
                   });
                 }
               }
             }
             
-            console.log(`Estratti ${productItems.length} prodotti dal ticket DylogApp ${ticket.IDTickets}`);
+            console.log(`Importo totale calcolato per ticket ${ticket.IDTickets}: ${totalAmount}€ da ${productItems.length} prodotti`);
             
             // Crea il record per SalesData
             const salesDataRecord = {
