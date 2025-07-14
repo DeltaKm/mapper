@@ -11,6 +11,10 @@ export async function updateCustomerOrders(salesData: any, idCustomer: string | 
     return;
   }
   
+  // Debug: stampa la struttura dei dati ricevuti
+  console.log('updateCustomerOrders - sourceType:', salesData.sourceType);
+  console.log('updateCustomerOrders - sourceData:', JSON.stringify(salesData.sourceData, null, 2));
+  
   try {
     // Cerca un record esistente per questo cliente
     const existingOrders = await prisma.customerOrders.findFirst({
@@ -41,12 +45,11 @@ export async function updateCustomerOrders(salesData: any, idCustomer: string | 
       fidelityCard: salesData.fidelityCard || "",
       
       // Dettagli prodotti se disponibili
-      ...(salesData.sourceType === "signa" && salesData.sourceData?.prodotti && {
-        items: mapSignaProducts(salesData.sourceData.prodotti)
-      }),
-      ...(salesData.sourceType === "dylogapp" && salesData.sourceData?.items && {
-        items: mapDylogAppProducts(salesData.sourceData.items)
-      }),
+      items: salesData.sourceType === "signa" ? 
+        mapSignaProducts(salesData.sourceData?.prodotti) : 
+        salesData.sourceType === "dylogapp" ? 
+        mapDylogAppProducts(salesData.sourceData?.items) : 
+        [],
       
       // Dati originali
       sourceData: salesData.sourceData || {}
