@@ -489,8 +489,16 @@ export async function POST(request: NextRequest) {
           try {
             // Estrai il cliente se presente
             let customerId = null;
-            if (orderWebInfo && orderWebInfo.customerId) {
-              customerId = orderWebInfo.customerId;
+            let idCustomerExt = null;
+            if (orderWebInfo) {
+              // In OrderWebInfo, IDCustomer è sempre presente
+              if (orderWebInfo.IDCustomer) {
+                idCustomerExt = orderWebInfo.IDCustomer;
+                customerId = orderWebInfo.IDCustomer; // Usa IDCustomer come customerId
+                console.log(`Cliente DylogApp trovato: ID=${idCustomerExt}, Nome=${orderWebInfo.CustomerName || ''}`);
+              } else {
+                console.log('Attenzione: OrderWebInfo presente ma IDCustomer mancante');
+              }
             }
             
             // Calcola l'importo totale
@@ -498,6 +506,26 @@ export async function POST(request: NextRequest) {
             if (ticket.Totoal) {
               totalAmount = parseFloat(ticket.Totoal.toString());
             }
+            
+            // Estrai i dettagli dei prodotti da DetailList
+            const productItems = [];
+            if (ticket.DetailList && Array.isArray(ticket.DetailList)) {
+              for (const detail of ticket.DetailList) {
+                // Verifica che ci siano i campi necessari (Name/Code e Price e Qta)
+                if ((detail.Name || detail.Code) && detail.Price !== undefined && detail.Qta !== undefined) {
+                  productItems.push({
+                    id: detail.Code || '',
+                    description: detail.Name || '',
+                    quantity: parseFloat(detail.Qta.toString()) || 0,
+                    price: parseFloat(detail.Price.toString()) || 0,
+                    totalPrice: (parseFloat(detail.Qta.toString()) || 0) * (parseFloat(detail.Price.toString()) || 0),
+                    category: detail.GroupDescription || ''
+                  });
+                }
+              }
+            }
+            
+            console.log(`Estratti ${productItems.length} prodotti dal ticket DylogApp ${ticket.IDTickets}`);
             
             // Crea il record per SalesData
             const salesDataRecord = {
@@ -514,7 +542,7 @@ export async function POST(request: NextRequest) {
                 orderWebInfo: orderWebInfo ? true : false,
                 paymentMode: ticket.PaymentMode || "",
                 // Aggiungo i dettagli dei prodotti per permettere il mapping corretto in CustomerOrders
-                items: ticket.items || []
+                items: productItems.length > 0 ? productItems : (ticket.items || [])
               }
             };
             
@@ -525,8 +553,7 @@ export async function POST(request: NextRequest) {
               await updateCustomerSalesSummary(salesDataRecord);
               
               // Aggiorna CustomerOrders con il nuovo ordine
-              const idCustomer = orderWebInfo?.IDCustomer || null;
-              await updateCustomerOrders(salesDataRecord, idCustomer);
+              await updateCustomerOrders(salesDataRecord, idCustomerExt);
             }
           } catch (error) {
             console.error('Errore nella creazione del record SalesData per DylogApp:', error);

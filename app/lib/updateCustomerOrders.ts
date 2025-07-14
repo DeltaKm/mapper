@@ -116,12 +116,15 @@ function mapDylogAppProducts(items: any[] | undefined): any[] {
     return [];
   }
   
-  return items.map(item => ({
-    productId: item.itemId || "",
-    name: item.name || "",
-    quantity: item.qty || 0,
-    unitPrice: item.price || 0,
-    totalPrice: item.totalPrice || 0,
-    category: item.category || "Non specificato"
-  }));
+  return items.map(item => {
+    // Gestisci sia il formato originale che quello estratto da DetailList
+    return {
+      productId: item.id || item.itemId || item.Code || "",
+      name: item.description || item.name || item.Name || "",
+      quantity: item.quantity || item.qty || item.Qta || 0,
+      unitPrice: item.price || item.Price || 0,
+      totalPrice: item.totalPrice || (item.price && item.quantity ? item.price * item.quantity : 0) || (item.Price && item.Qta ? item.Price * item.Qta : 0) || 0,
+      category: item.category || item.GroupDescription || "Non specificato"
+    };
+  });
 }
