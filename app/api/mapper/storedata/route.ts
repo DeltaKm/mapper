@@ -341,6 +341,8 @@ export async function POST(request: NextRequest) {
             paymentMethod: movimento.pagamenti && movimento.pagamenti.length > 0 ? 
               movimento.pagamenti[0].CodTipoPagamento : null,
             customerRef: movimento.customer?.idCustomerExt || null,
+            // Aggiungo i dettagli dei prodotti per permettere il mapping corretto in CustomerOrders
+            prodotti: movimento.prodotti || []
           }
         };
       } catch (error) {
@@ -510,7 +512,9 @@ export async function POST(request: NextRequest) {
               sourceData: {
                 ticketId: ticket.IDTickets,
                 orderWebInfo: orderWebInfo ? true : false,
-                paymentMode: ticket.PaymentMode || ""
+                paymentMode: ticket.PaymentMode || "",
+                // Aggiungo i dettagli dei prodotti per permettere il mapping corretto in CustomerOrders
+                items: ticket.items || []
               }
             };
             
