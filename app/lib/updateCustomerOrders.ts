@@ -76,6 +76,7 @@ export async function updateCustomerOrders(
         // Se trovato, estrai l'array dettagli
         if (signaMovimento && signaMovimento.payload) {
           const payload = signaMovimento.payload as any;
+          // Ora il payload contiene direttamente l'oggetto movimento con l'array dettagli
           prodottiDettagli = payload.dettagli || [];
           
           // Se è un reso, calcola il valore totale dei prodotti resi

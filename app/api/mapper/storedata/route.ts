@@ -63,10 +63,10 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    // Salva il payload completo nella collezione SignaMovimenti
-    if (Array.isArray(content.movimentivend) && content.movimentivend.length > 0) {
-      // Per ogni movimento nel payload, salva i dati di intestazione
-      for (const movimento of content.movimentivend) {
+    // Salva i dati dei movimenti nella collezione SignaMovimenti
+    if (Array.isArray(content.movimenti) && content.movimenti.length > 0) {
+      // Per ogni movimento nell'array movimenti, salva i dati con i dettagli dei prodotti
+      for (const movimento of content.movimenti) {
         // Verifica se esiste già un documento con lo stesso IDReferencePOS
         const existingMovimento = await prisma.signaMovimenti.findFirst({
           where: {
@@ -104,6 +104,10 @@ export async function POST(request: NextRequest) {
           },
         });
       }
+    }
+    
+    // Salva i dati delle vendite nella collezione SignaMovimentiVend
+    if (Array.isArray(content.movimentivend) && content.movimentivend.length > 0) {
 
       await Promise.allSettled(
         content.movimentivend.map((movimento: any) =>
