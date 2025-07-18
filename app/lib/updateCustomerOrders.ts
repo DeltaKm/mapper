@@ -292,12 +292,12 @@ function mapSignaProducts(prodotti: any[] | undefined): any[] {
   }
   
   return prodotti.map(prod => ({
-    productId: prod.codice || "",
-    name: prod.descrizione || "",
-    quantity: parseInt(prod.quantita) || 0,
-    unitPrice: parseFloat(prod.prezzo_unitario) || 0,
-    totalPrice: parseFloat(prod.prezzo_totale) || 0,
-    category: prod.categoria || "Non specificato"
+    productId: prod.CodArticolo || "",
+    name: prod.Article_Description_Short || "",
+    quantity: parseFloat(prod.Quantita?.toString() || "0") || 0,
+    unitPrice: parseFloat(prod.Valore?.toString() || "0") || 0,
+    totalPrice: (parseFloat(prod.Quantita?.toString() || "0") || 0) * (parseFloat(prod.Valore?.toString() || "0") || 0),
+    category: prod.Famiglia || prod.CodFamiglia || "Non specificato"
   }));
 }
 

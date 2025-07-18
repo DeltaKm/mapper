@@ -195,6 +195,26 @@ export async function POST(request: NextRequest) {
               }
             }
 
+            // Salva il ticket nella collezione ticketListBaccoDylogAPP
+            // Per semplicità, salviamo sempre il ticket senza verificare duplicati
+            // In futuro potremmo implementare una verifica più robusta
+            try {
+              await prisma.ticketListBaccoDylogAPP.create({
+                data: {
+                  ticketData: ticket,
+                  restaurant_code,
+                  subscriber_code: "DylogApp",
+                  orderWebInfo,
+                  createdAt: new Date(),
+                  updateAt: new Date()
+                }
+              });
+              console.log(`Ticket DylogApp con IDTickets ${orderWebInfo.IDTickets} salvato con successo.`);
+            } catch (error) {
+              // Gestione errori: potrebbe essere un duplicato o altro problema
+              console.log(`Errore nel salvare il ticket DylogApp con IDTickets ${orderWebInfo.IDTickets}: ${error}`);
+            }
+
             // Utilizzo updateCustomerOrders per aggiornare i campi aggregati
             await updateCustomerOrders(ticket, "dylogapp", orderWebInfo.IDCustomer, restaurant_code);
           })
