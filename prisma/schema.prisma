@@ -269,16 +269,45 @@ model CustomerSalesSummary {
   @@index([lastOrderDate])
 }
 
-// Modello per i dati grezzi dei movimenti Signa
-model SignaMovimenti {
+// Modello per i dati grezzi dei movimenti Signa (vendite)
+model SignaMovimentiVend {
   id              String   @id @default(auto()) @map("_id") @db.ObjectId
   movimentoData   Json
+  IDMovimentoPOS  String?  @default("") // Campo aggiunto per controllo duplicati
   restaurant_code String?  @default("")
   subscriber_code String?  @default("SIGNA")
   createdAt       DateTime @default(now())
   updateAt        DateTime @updatedAt
   
   @@index([restaurant_code])
+  @@index([IDMovimentoPOS]) // Indice aggiunto per ottimizzare le query di ricerca duplicati
+}
+
+// Modello per i dati grezzi dei movimenti Signa (payload completo)
+model SignaMovimenti {
+  id                String   @id @default(auto()) @map("_id") @db.ObjectId
+  payload           Json
+  idReferenceGateway String?  @default("")
+  IDReferencePOS    String?  @default("")
+  CodAzienda        String?  @default("")
+  CodNegozio        String?  @default("")
+  CodCommesso       String?  @default("")
+  CodSconto         String?  @default("")
+  MovimentoData     String?  @default("")
+  MovimentoOra      String?  @default("")
+  MovimentoAnno     Int?     @default(0)
+  VenditaWeb        Boolean? @default(false)
+  TaxFree           Boolean? @default(false)
+  Noleggiato        Boolean? @default(false)
+  Fatturato         Boolean? @default(false)
+  restaurant_code   String?  @default("")
+  subscriber_code   String?  @default("SIGNA")
+  createdAt         DateTime @default(now())
+  updateAt          DateTime @updatedAt
+  
+  @@index([restaurant_code])
+  @@index([IDReferencePOS])
+  @@index([idReferenceGateway])
 }
 
 model CustomerOrders {
