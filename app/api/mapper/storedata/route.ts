@@ -291,25 +291,89 @@ export async function POST(request: NextRequest) {
 
               if (existing) {
                 // Aggiorna il cliente esistente invece di eliminarlo e ricrearlo
+                // Filtra i campi del cliente per includere solo quelli definiti nel modello Prisma
+                const filteredCustomerData = {
+                  idReferenceGateway: customer.idReferenceGateway || "",
+                  idCustomer: customer.idCustomer || "",
+                  gender: customer.gender || "",
+                  name: customer.name || "",
+                  surname: customer.surname || "",
+                  birth_data: customer.birth_data || "",
+                  vat_number: customer.vat_number || "",
+                  residence_address: customer.residence_address || "",
+                  residence_zipcode: customer.residence_zipcode || "",
+                  residence_city: customer.residence_city || "",
+                  residence_province: customer.residence_province || "",
+                  residence_region: customer.residence_region || "",
+                  residence_state: customer.residence_state || "",
+                  domicile_address: customer.domicile_address || "",
+                  domicile_zipcode: customer.domicile_zipcode || "",
+                  domicile_city: customer.domicile_city || "",
+                  domicile_province: customer.domicile_province || "",
+                  domicile_region: customer.domicile_region || "",
+                  domicile_state: customer.domicile_state || "",
+                  mobile: customer.mobile || "",
+                  email: customer.email || "",
+                  publicCode: customer.publicCode || "",
+                  subscriber: customer.subscriber || "",
+                  arrived_from: customer.arrived_from || "",
+                  fidelity_card_number: customer.fidelity_card_number || "",
+                  consent_marketing: customer.consent_marketing || "",
+                  consent_third_parties_marketing: customer.consent_third_parties_marketing || "",
+                  dateCreation: customer.dateCreation || "",
+                  dateLastUpdate: customer.dateLastUpdate || "",
+                  deleted: customer.deleted || "",
+                  restaurant_code,
+                  subscriber_code,
+                  updateAt: new Date(), // Assicura che il timestamp di aggiornamento sia corretto
+                };
+                
                 await prisma.customer.update({
                   where: { id: existing.id },
-                  data: {
-                    ...customer,
-                    restaurant_code,
-                    subscriber_code,
-                    updateAt: new Date(), // Assicura che il timestamp di aggiornamento sia corretto
-                  },
+                  data: filteredCustomerData,
                 });
                 console.log(`[${getItalianDateString()}] Cliente con idCustomer ${customer.idCustomer} aggiornato con successo.`);
                 aggiornati++;
               } else {
                 // Crea un nuovo cliente se non esiste
+                // Filtra i campi del cliente per includere solo quelli definiti nel modello Prisma
+                const filteredCustomerData = {
+                  idReferenceGateway: customer.idReferenceGateway || "",
+                  idCustomer: customer.idCustomer || "",
+                  gender: customer.gender || "",
+                  name: customer.name || "",
+                  surname: customer.surname || "",
+                  birth_data: customer.birth_data || "",
+                  vat_number: customer.vat_number || "",
+                  residence_address: customer.residence_address || "",
+                  residence_zipcode: customer.residence_zipcode || "",
+                  residence_city: customer.residence_city || "",
+                  residence_province: customer.residence_province || "",
+                  residence_region: customer.residence_region || "",
+                  residence_state: customer.residence_state || "",
+                  domicile_address: customer.domicile_address || "",
+                  domicile_zipcode: customer.domicile_zipcode || "",
+                  domicile_city: customer.domicile_city || "",
+                  domicile_province: customer.domicile_province || "",
+                  domicile_region: customer.domicile_region || "",
+                  domicile_state: customer.domicile_state || "",
+                  mobile: customer.mobile || "",
+                  email: customer.email || "",
+                  publicCode: customer.publicCode || "",
+                  subscriber: customer.subscriber || "",
+                  arrived_from: customer.arrived_from || "",
+                  fidelity_card_number: customer.fidelity_card_number || "",
+                  consent_marketing: customer.consent_marketing || "",
+                  consent_third_parties_marketing: customer.consent_third_parties_marketing || "",
+                  dateCreation: customer.dateCreation || "",
+                  dateLastUpdate: customer.dateLastUpdate || "",
+                  deleted: customer.deleted || "",
+                  restaurant_code,
+                  subscriber_code,
+                };
+                
                 await prisma.customer.create({
-                  data: {
-                    ...customer,
-                    restaurant_code,
-                    subscriber_code,
-                  },
+                  data: filteredCustomerData,
                 });
                 console.log(`[${getItalianDateString()}] Nuovo cliente con idCustomer ${customer.idCustomer} creato con successo.`);
                 creati++;
