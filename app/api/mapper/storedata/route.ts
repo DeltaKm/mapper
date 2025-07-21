@@ -44,8 +44,8 @@ export async function POST(request: NextRequest) {
   const limit = pLimit(CONCURRENCY);
 
   try {
-    const body = await parseLargeJSON(request);
     const searchParams = request.nextUrl.searchParams;
+    const body = await parseLargeJSON(request);
     const restaurant_code = searchParams.get("restaurant_code") ?? "";
     const subscriber_code = searchParams.get("subscriber_code") ?? "";
 
@@ -63,8 +63,27 @@ export async function POST(request: NextRequest) {
       },
     });
 
+    // Log del payload completo ricevuto
+    console.log(`[${getItalianDateString()}] PAYLOAD RICEVUTO - RICHIESTA DA: ${request.headers.get('x-forwarded-for') || request.headers.get('remote-addr')}`);
+    console.log(JSON.stringify({
+      timestamp: new Date().toISOString(),
+      method: request.method,
+      url: request.url,
+      headers: Object.fromEntries(request.headers.entries()),
+      params: {
+        restaurant_code: searchParams.get("restaurant_code"),
+        subscriber_code: searchParams.get("subscriber_code")
+      },
+      body: {
+        customerList: body.customerList ? `[${body.customerList.length} elementi]` : 'assente',
+        movimentivend: body.movimentivend ? `[${body.movimentivend.length} elementi]` : 'assente',
+        ticketList: body.ticketList ? `[${body.ticketList.length} elementi]` : 'assente',
+        // Aggiungi qui altri campi rilevanti del payload
+      }
+    }, null, 2));
+
     // Salva i dati dei movimenti nella collezione SignaMovimenti
-    if (Array.isArray(content.movimenti) && content.movimenti.length > 0) {
+    if (Array.isArray(body.movimenti) && body.movimenti.length > 0) {
       console.log(`[${getItalianDateString()}] Processando ${content.movimenti.length} movimenti Signa per SignaMovimenti...`);
       let salvati = 0, saltati = 0, errori = 0;
       
@@ -286,24 +305,33 @@ export async function POST(request: NextRequest) {
         content.customerList.map((customer: any) =>
           limit(async () => {
             try {
-              if (!customer.idCustomer) {
-                console.warn(`[${getItalianDateString()}] Cliente senza idCustomer, skip.`);
+              // Se esiste idCustomerExt, lo usiamo al posto di idCustomer
+              const effectiveCustomerId = customer.idCustomerExt || customer.idCustomer;
+              
+              if (!effectiveCustomerId) {
+                console.warn(`[${getItalianDateString()}] Cliente senza idCustomer/idCustomerExt, skip.`);
                 return;
               }
 
-              // Cerca il cliente solo per idCustomer (più sicuro)
+              // Cerca il cliente per idCustomerExt (se presente) o idCustomer
               const existing = await prisma.customer.findFirst({
                 where: {
-                  idCustomer: customer.idCustomer,
+                  OR: [
+                    { idCustomer: effectiveCustomerId },
+                    ...(customer.idCustomerExt ? [{ idCustomer: customer.idCustomerExt }] : [])
+                  ].filter(Boolean) as any[],
                 },
               });
+              
+              // Log per tracciare quale ID stiamo usando
+              console.log(`[${getItalianDateString()}] Processo cliente - ID: ${effectiveCustomerId}${customer.idCustomerExt ? ' (da idCustomerExt)' : ''}${existing ? ' - TROVATO' : ' - NUOVO'}`);
 
               if (existing) {
                 // Aggiorna il cliente esistente invece di eliminarlo e ricrearlo
                 // Filtra i campi del cliente per includere solo quelli definiti nel modello Prisma
                 const filteredCustomerData = {
                   idReferenceGateway: customer.idReferenceGateway || "",
-                  idCustomer: customer.idCustomer || "",
+                  idCustomer: effectiveCustomerId,
                   gender: customer.gender || "",
                   name: customer.name || "",
                   surname: customer.surname || "",
@@ -337,6 +365,10 @@ export async function POST(request: NextRequest) {
                   updateAt: new Date(), // Assicura che il timestamp di aggiornamento sia corretto
                 };
                 
+                // Log dei dati filtrati usati per l'update
+                console.log(`[${getItalianDateString()}] DATI FILTRATI PER UPDATE CUSTOMER ${customer.idCustomer}:`);
+                console.log(JSON.stringify(filteredCustomerData, null, 2));
+                
                 await prisma.customer.update({
                   where: { id: existing.id },
                   data: filteredCustomerData,
@@ -348,7 +380,7 @@ export async function POST(request: NextRequest) {
                 // Filtra i campi del cliente per includere solo quelli definiti nel modello Prisma
                 const filteredCustomerData = {
                   idReferenceGateway: customer.idReferenceGateway || "",
-                  idCustomer: customer.idCustomer || "",
+                  idCustomer: effectiveCustomerId,
                   gender: customer.gender || "",
                   name: customer.name || "",
                   surname: customer.surname || "",
@@ -380,6 +412,10 @@ export async function POST(request: NextRequest) {
                   restaurant_code,
                   subscriber_code,
                 };
+                
+                // Log dei dati filtrati usati per la creazione
+                console.log(`[${getItalianDateString()}] DATI FILTRATI PER CREATE CUSTOMER ${customer.idCustomer}:`);
+                console.log(JSON.stringify(filteredCustomerData, null, 2));
                 
                 await prisma.customer.create({
                   data: filteredCustomerData,
