@@ -46,6 +46,8 @@ model Customer {
   consent_third_parties_marketing String?  @default("")
   dateCreation                    String?  @default("")
   dateLastUpdate                  String?  @default("")
+  dateCreationProduct             String?  @default("")
+  dateLastUpdateProduct           String?  @default("")
   deleted                         String?  @default("")
   restaurant_code                 String?  @default("")
   subscriber_code                 String?  @default("")
@@ -168,6 +170,7 @@ type customerListType {
   email              String
   publicCode         String
   arrived_from       String
+  
   // avvisare perri di inviare i dati nel tipo coretto
 }
 
