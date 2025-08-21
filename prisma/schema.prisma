@@ -170,9 +170,7 @@ type customerListType {
   email              String
   publicCode         String
   arrived_from       String
-  
-  // avvisare perri di inviare i dati nel tipo coretto
-}
+  }
 
 model mkt {
   id       String   @id @default(auto()) @map("_id") @db.ObjectId

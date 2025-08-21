@@ -55,13 +55,14 @@ export async function POST(request: NextRequest) {
       subscriber_code,
     };
 
-    await prisma.data.create({
-      data: {
-        content,
-        createdAt: getItalianDate(),
-        createdAtIta: getItalianDateString(),
-      },
-    });
+    // COMMENTATO: Salvataggio payload completo per risparmiare spazio DB
+    // await prisma.data.create({
+    //   data: {
+    //     content,
+    //     createdAt: getItalianDate(),
+    //     createdAtIta: getItalianDateString(),
+    //   },
+    // });
 
     // Log del payload completo ricevuto
     console.log(`[${getItalianDateString()}] PAYLOAD RICEVUTO - RICHIESTA DA: ${request.headers.get('x-forwarded-for') || request.headers.get('remote-addr')}`);
