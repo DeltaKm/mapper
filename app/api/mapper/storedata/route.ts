@@ -85,11 +85,11 @@ export async function POST(request: NextRequest) {
 
     // Salva i dati dei movimenti nella collezione SignaMovimenti
     if (Array.isArray(body.movimenti) && body.movimenti.length > 0) {
-      console.log(`[${getItalianDateString()}] Processando ${content.movimenti.length} movimenti Signa per SignaMovimenti...`);
+      console.log(`[${getItalianDateString()}] Processando ${body.movimenti.length} movimenti Signa per SignaMovimenti...`);
       let salvati = 0, saltati = 0, errori = 0;
       
       // Per ogni movimento nell'array movimenti, salva i dati con i dettagli dei prodotti
-      for (const movimento of content.movimenti) {
+      for (const movimento of body.movimenti) {
         try {
           // Verifica se esiste già un documento con lo stesso IDReferencePOS
           const existingMovimento = await prisma.signaMovimenti.findFirst({
@@ -138,12 +138,12 @@ export async function POST(request: NextRequest) {
     }
     
     // Salva i dati delle vendite nella collezione SignaMovimentiVend
-    if (Array.isArray(content.movimentivend) && content.movimentivend.length > 0) {
-      console.log(`[${getItalianDateString()}] Processando ${content.movimentivend.length} movimenti vendita Signa...`);
+    if (Array.isArray(body.movimentivend) && body.movimentivend.length > 0) {
+      console.log(`[${getItalianDateString()}] Processando ${body.movimentivend.length} movimenti vendita Signa...`);
       let salvati = 0, saltati = 0, errori = 0;
 
       await Promise.allSettled(
-        content.movimentivend.map((movimento: any) =>
+        body.movimentivend.map((movimento: any) =>
           limit(async () => {
             try {
               // Verifica se esiste già un documento con lo stesso IDMovimentoPOS
@@ -209,12 +209,12 @@ export async function POST(request: NextRequest) {
       console.log(`[${getItalianDateString()}] Completato processamento movimenti vendita Signa: ${salvati} salvati, ${saltati} saltati, ${errori} errori`);
     }
 
-    if (Array.isArray(content.TicketList) && content.TicketList.length > 0) {
-      console.log(`[${getItalianDateString()}] Processando ${content.TicketList.length} ticket DylogApp...`);
+    if (Array.isArray(body.TicketList) && body.TicketList.length > 0) {
+      console.log(`[${getItalianDateString()}] Processando ${body.TicketList.length} ticket DylogApp...`);
       let salvati = 0, saltati = 0, errori = 0, erroriUpdate = 0;
 
       await Promise.allSettled(
-        content.TicketList.map((ticket: any) =>
+        body.TicketList.map((ticket: any) =>
           limit(async () => {
             try {
               let orderWebInfo = null;
@@ -289,13 +289,13 @@ export async function POST(request: NextRequest) {
       console.log(`[${getItalianDateString()}] Completato processamento ticket DylogApp: ${salvati} salvati, ${saltati} saltati, ${errori} errori, ${erroriUpdate} errori di aggiornamento`);
     }
 
-    if (Array.isArray(content.customerList) && content.customerList.length > 0) {
-      console.log(`[${getItalianDateString()}] Processando ${content.customerList.length} clienti...`);
+    if (Array.isArray(body.customerList) && body.customerList.length > 0) {
+      console.log(`[${getItalianDateString()}] Processando ${body.customerList.length} clienti...`);
       
       // Log dettagliato della struttura dei clienti per analisi
       console.log(`[${getItalianDateString()}] STRUTTURA CUSTOMER PAYLOAD:`);
-      if (content.customerList.length > 0) {
-        const sampleCustomer = content.customerList[0];
+      if (body.customerList.length > 0) {
+        const sampleCustomer = body.customerList[0];
         // Log dell'intero oggetto customer per vedere tutti i campi
         console.log(`[${getItalianDateString()}] CUSTOMER COMPLETO:`);
         console.log(JSON.stringify(sampleCustomer, null, 2));
@@ -303,7 +303,7 @@ export async function POST(request: NextRequest) {
       let aggiornati = 0, creati = 0, errori = 0;
 
       await Promise.allSettled(
-        content.customerList.map((customer: any) =>
+        body.customerList.map((customer: any) =>
           limit(async () => {
             try {
               // Se esiste idCustomerExt, lo usiamo al posto di idCustomer
