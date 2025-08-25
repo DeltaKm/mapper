@@ -284,7 +284,7 @@ export async function POST(request: NextRequest) {
               
               if (!effectiveCustomerId) {
                 console.warn(`[${getItalianDateString()}] Cliente senza idCustomer/idCustomerExt, skip.`);
-                return;
+                continue;
               }
 
               // Cerca il cliente per idCustomerExt (se presente) o idCustomer
