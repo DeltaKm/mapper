@@ -265,15 +265,6 @@ export async function POST(request: NextRequest) {
 
     if (Array.isArray(body.customerList) && body.customerList.length > 0) {
       console.log(`[${getItalianDateString()}] Processando ${body.customerList.length} clienti...`);
-      
-      // Log dettagliato della struttura dei clienti per analisi
-      console.log(`[${getItalianDateString()}] STRUTTURA CUSTOMER PAYLOAD:`);
-      if (body.customerList.length > 0) {
-        const sampleCustomer = body.customerList[0];
-        // Log dell'intero oggetto customer per vedere tutti i campi
-        console.log(`[${getItalianDateString()}] CUSTOMER COMPLETO:`);
-        console.log(JSON.stringify(sampleCustomer, null, 2));
-      }
       let aggiornati = 0, creati = 0, errori = 0;
 
       // Processamento sequenziale per ridurre uso memoria
