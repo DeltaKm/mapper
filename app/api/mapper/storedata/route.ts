@@ -5,8 +5,8 @@ import moment from "moment-timezone";
 import pLimit from "p-limit";
 import { updateCustomerOrders } from "@/app/lib/updateCustomerOrders";
 
-const MAX_MB = 32;
-const CONCURRENCY = 5;
+const MAX_MB = 16; // Ridotto da 32MB a 16MB
+const CONCURRENCY = 3; // Ridotto da 5 a 3 per limitare uso memoria
 
 function getItalianDate(): Date {
   return moment().tz("Europe/Rome").toDate();
@@ -17,26 +17,25 @@ function getItalianDateString(): string {
 }
 
 async function parseLargeJSON(request: NextRequest): Promise<any> {
-  const reader = request.body?.getReader();
-  if (!reader) throw new Error("Stream non disponibile");
-
-  const chunks: Uint8Array[] = [];
-  let totalSize = 0;
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (value) {
-      chunks.push(value);
-      totalSize += value.length;
-      if (totalSize > MAX_MB * 1024 * 1024) {
-        throw new Error("Payload oltre il limite di 32MB");
-      }
+  try {
+    // Usa il metodo nativo di Next.js che è più efficiente
+    const body = await request.json();
+    
+    // Stima approssimativa della dimensione per sicurezza
+    const bodyString = JSON.stringify(body);
+    const sizeInMB = Buffer.byteLength(bodyString, 'utf8') / (1024 * 1024);
+    
+    if (sizeInMB > MAX_MB) {
+      throw new Error(`Payload troppo grande: ${sizeInMB.toFixed(2)}MB (limite: ${MAX_MB}MB)`);
     }
+    
+    return body;
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('too large')) {
+      throw new Error(`Payload oltre il limite di ${MAX_MB}MB`);
+    }
+    throw error;
   }
-
-  const buffer = Buffer.concat(chunks);
-  return JSON.parse(buffer.toString("utf8"));
 }
 
 export async function POST(request: NextRequest) {
@@ -49,11 +48,7 @@ export async function POST(request: NextRequest) {
     const restaurant_code = searchParams.get("restaurant_code") ?? "";
     const subscriber_code = searchParams.get("subscriber_code") ?? "";
 
-    const content = {
-      ...body,
-      restaurant_code,
-      subscriber_code,
-    };
+    // Rimuoviamo la creazione di content per evitare duplicazione in memoria
 
     // COMMENTATO: Salvataggio payload completo per risparmiare spazio DB
     // await prisma.data.create({
@@ -64,31 +59,16 @@ export async function POST(request: NextRequest) {
     //   },
     // });
 
-    // Log del payload completo ricevuto
-    console.log(`[${getItalianDateString()}] PAYLOAD RICEVUTO - RICHIESTA DA: ${request.headers.get('x-forwarded-for') || request.headers.get('remote-addr')}`);
-    console.log(JSON.stringify({
-      timestamp: new Date().toISOString(),
-      method: request.method,
-      url: request.url,
-      headers: Object.fromEntries(request.headers.entries()),
-      params: {
-        restaurant_code: searchParams.get("restaurant_code"),
-        subscriber_code: searchParams.get("subscriber_code")
-      },
-      body: {
-        customerList: body.customerList ? `[${body.customerList.length} elementi]` : 'assente',
-        movimentivend: body.movimentivend ? `[${body.movimentivend.length} elementi]` : 'assente',
-        ticketList: body.ticketList ? `[${body.ticketList.length} elementi]` : 'assente',
-        // Aggiungi qui altri campi rilevanti del payload
-      }
-    }, null, 2));
+    // Log minimale per ridurre uso memoria
+    const clientIP = request.headers.get('x-forwarded-for')?.split(',')[0] || 'unknown';
+    console.log(`[${getItalianDateString()}] Request from ${clientIP} - Payload: customers=${body.customerList?.length || 0}, movements=${body.movimenti?.length || 0}, sales=${body.movimentivend?.length || 0}, tickets=${body.ticketList?.length || 0}`);
 
     // Salva i dati dei movimenti nella collezione SignaMovimenti
     if (Array.isArray(body.movimenti) && body.movimenti.length > 0) {
       console.log(`[${getItalianDateString()}] Processando ${body.movimenti.length} movimenti Signa per SignaMovimenti...`);
       let salvati = 0, saltati = 0, errori = 0;
       
-      // Per ogni movimento nell'array movimenti, salva i dati con i dettagli dei prodotti
+      // Processamento sequenziale per ridurre uso memoria
       for (const movimento of body.movimenti) {
         try {
           // Verifica se esiste già un documento con lo stesso IDReferencePOS
@@ -142,9 +122,8 @@ export async function POST(request: NextRequest) {
       console.log(`[${getItalianDateString()}] Processando ${body.movimentivend.length} movimenti vendita Signa...`);
       let salvati = 0, saltati = 0, errori = 0;
 
-      await Promise.allSettled(
-        body.movimentivend.map((movimento: any) =>
-          limit(async () => {
+      // Processamento sequenziale per ridurre uso memoria
+      for (const movimento of body.movimentivend) {
             try {
               // Verifica se esiste già un documento con lo stesso IDMovimentoPOS
               const existingMovimentoVend = await prisma.signaMovimentiVend.findFirst({
@@ -203,9 +182,7 @@ export async function POST(request: NextRequest) {
               errori++;
               console.error(`[${getItalianDateString()}] Errore nel processare movimento vendita Signa con IDMovimentoPOS ${movimento.IDMovimentoPOS}: ${error}`);
             }
-          })
-        )
-      );
+      }
       console.log(`[${getItalianDateString()}] Completato processamento movimenti vendita Signa: ${salvati} salvati, ${saltati} saltati, ${errori} errori`);
     }
 
@@ -213,9 +190,8 @@ export async function POST(request: NextRequest) {
       console.log(`[${getItalianDateString()}] Processando ${body.TicketList.length} ticket DylogApp...`);
       let salvati = 0, saltati = 0, errori = 0, erroriUpdate = 0;
 
-      await Promise.allSettled(
-        body.TicketList.map((ticket: any) =>
-          limit(async () => {
+      // Processamento sequenziale per ridurre uso memoria
+      for (const ticket of body.TicketList) {
             try {
               let orderWebInfo = null;
               if (Array.isArray(ticket.DetailList)) {
@@ -283,9 +259,7 @@ export async function POST(request: NextRequest) {
               console.error(`[${getItalianDateString()}] Errore generale nel processare ticket DylogApp: ${error}`);
               errori++;
             }
-          })
-        )
-      );
+      }
       console.log(`[${getItalianDateString()}] Completato processamento ticket DylogApp: ${salvati} salvati, ${saltati} saltati, ${errori} errori, ${erroriUpdate} errori di aggiornamento`);
     }
 
@@ -302,9 +276,8 @@ export async function POST(request: NextRequest) {
       }
       let aggiornati = 0, creati = 0, errori = 0;
 
-      await Promise.allSettled(
-        body.customerList.map((customer: any) =>
-          limit(async () => {
+      // Processamento sequenziale per ridurre uso memoria
+      for (const customer of body.customerList) {
             try {
               // Se esiste idCustomerExt, lo usiamo al posto di idCustomer
               const effectiveCustomerId = customer.idCustomerExt || customer.idCustomer;
@@ -429,9 +402,7 @@ export async function POST(request: NextRequest) {
               console.error(`[${getItalianDateString()}] Errore nell'aggiornamento/creazione del cliente ${customer?.idCustomer || 'sconosciuto'}: ${error}`);
               errori++;
             }
-          })
-        )
-      );
+      }
       console.log(`[${getItalianDateString()}] Completato processamento clienti: ${aggiornati} aggiornati, ${creati} creati, ${errori} errori`);
     }
 
