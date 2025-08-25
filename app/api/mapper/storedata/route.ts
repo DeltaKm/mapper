@@ -136,7 +136,7 @@ export async function POST(request: NextRequest) {
               if (existingMovimentoVend) {
                 console.log(`[${getItalianDateString()}] Movimento Signa con IDMovimentoPOS ${movimento.IDMovimentoPOS} già presente in SignaMovimentiVend, skip.`);
                 saltati++;
-                return; // Salta il resto della funzione
+                continue; // Salta solo l'iterazione corrente
               }
               
               // Se non esiste, procedi con il salvataggio
@@ -172,7 +172,7 @@ export async function POST(request: NextRequest) {
                 const idCustomer = movimento.customer?.idCustomerExt || movimento.customer?.idCustomer;
                 if (!idCustomer) {
                   console.warn(`[${getItalianDateString()}] Movimento Signa con IDMovimentoPOS ${movimento.IDMovimentoPOS} senza idCustomer, skip updateCustomerOrders.`);
-                  return;
+                  continue;
                 }
                 await updateCustomerOrders(movimento, "signa", idCustomer, restaurant_code);
               } catch (updateError) {
@@ -206,7 +206,7 @@ export async function POST(request: NextRequest) {
               if (!orderWebInfo || !orderWebInfo.IDCustomer) {
                 console.warn(`[${getItalianDateString()}] Ticket DylogApp senza orderWebInfo o IDCustomer, skip.`);
                 saltati++;
-                return;
+                continue;
               }
 
               const productItems = [];
