@@ -8,6 +8,8 @@ enum StatusCodes {
   InternalServerError = 500,
 }
 
+
+// da implementare le get per tutte le collection
 export async function GET(request: NextRequest) {
   try {
     const id = request.nextUrl.searchParams.get("id");

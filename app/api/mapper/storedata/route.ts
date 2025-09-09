@@ -265,66 +265,96 @@ export async function POST(request: NextRequest) {
 
     if (Array.isArray(body.customerList) && body.customerList.length > 0) {
       console.log(`[${getItalianDateString()}] Processando ${body.customerList.length} clienti...`);
-      let aggiornati = 0, creati = 0, errori = 0;
+      let aggiornati = 0, creati = 0, saltati = 0, errori = 0;
 
       // Processamento sequenziale per ridurre uso memoria
       for (const customer of body.customerList) {
             try {
-              // Se esiste idCustomerExt, lo usiamo al posto di idCustomer
-              const effectiveCustomerId = customer.idCustomerExt || customer.idCustomer;
+              // Determina il tipo di utente basato su arrived_from
+              const arrivedFrom = customer.arrived_from?.toLowerCase() || "";
               
-              if (!effectiveCustomerId) {
-                console.warn(`[${getItalianDateString()}] Cliente senza idCustomer/idCustomerExt, skip.`);
-                continue;
+              // Data in arrivo (specifica: dateLastUpdateProduct)
+              const incomingLastUpdate = customer.dateLastUpdateProduct || "";
+              
+              let existing = null;
+              let effectiveCustomerId = "";
+              
+              if (arrivedFrom === "app") {
+                // LOGICA APP: usa idCustomerExt o idCustomer
+                effectiveCustomerId = customer.idCustomerExt || customer.idCustomer;
+                
+                if (!effectiveCustomerId) {
+                  console.warn(`[${getItalianDateString()}] Cliente App senza idCustomer/idCustomerExt, skip.`);
+                  continue;
+                }
+                
+                // Cerca per idCustomer
+                existing = await prisma.customer.findFirst({
+                  where: { idCustomer: effectiveCustomerId }
+                });
+              } else {
+                // LOGICA NON-APP
+                if (customer.idCustomerExt) {
+                  // Ha idCustomerExt → salvalo in idCustomer
+                  effectiveCustomerId = customer.idCustomerExt;
+                  existing = await prisma.customer.findFirst({
+                    where: { idCustomer: effectiveCustomerId }
+                  });
+                } else {
+                  // NON ha idCustomerExt → idCustomer = "" e cerca per email
+                  effectiveCustomerId = "";
+                  if (customer.email) {
+                    existing = await prisma.customer.findFirst({
+                      where: { email: customer.email }
+                    });
+                  }
+                }
               }
-
-              // Cerca il cliente per idCustomerExt (se presente) o idCustomer
-              const existing = await prisma.customer.findFirst({
-                where: {
-                  OR: [
-                    { idCustomer: effectiveCustomerId },
-                    ...(customer.idCustomerExt ? [{ idCustomer: customer.idCustomerExt }] : [])
-                  ].filter(Boolean) as any[],
-                },
-              });
               
               // Log per tracciare quale ID stiamo usando
-              console.log(`[${getItalianDateString()}] Processo cliente - ID: ${effectiveCustomerId}${customer.idCustomerExt ? ' (da idCustomerExt)' : ''}${existing ? ' - TROVATO' : ' - NUOVO'}`);
+              console.log(`[${getItalianDateString()}] Processo cliente - arrived_from: ${arrivedFrom}, ID: ${effectiveCustomerId}${customer.idCustomerExt ? ' (da idCustomerExt)' : ''}${existing ? ' - TROVATO' : ' - NUOVO'}`);
 
               if (existing) {
-                // Aggiorna il cliente esistente invece di eliminarlo e ricrearlo
-                // Filtra i campi del cliente per includere solo quelli definiti nel modello Prisma
+                // Controlla se dateLastUpdateProduct (in arrivo) è più recente di dateLastUpdate (salvato)
+                const existingLastUpdate = existing.dateLastUpdate || "";
+                
+                if (incomingLastUpdate && existingLastUpdate && incomingLastUpdate <= existingLastUpdate) {
+                  console.log(`[${getItalianDateString()}] Cliente ${effectiveCustomerId || 'email:' + customer.email} saltato - dateLastUpdateProduct non più recente (${incomingLastUpdate} <= ${existingLastUpdate})`);
+                  saltati++;
+                  continue;
+                }
+                // Aggiorna il cliente esistente preservando i valori esistenti se non vengono passati nuovi valori
                 const filteredCustomerData = {
-                  idReferenceGateway: customer.idReferenceGateway || "",
+                  idReferenceGateway: customer.idReferenceGateway || existing.idReferenceGateway || "",
                   idCustomer: effectiveCustomerId,
-                  gender: customer.gender || "",
-                  name: customer.name || "",
-                  surname: customer.surname || "",
-                  birth_data: customer.birth_data || "",
-                  vat_number: customer.vat_number || "",
-                  residence_address: customer.residence_address || "",
-                  residence_zipcode: customer.residence_zipcode || "",
-                  residence_city: customer.residence_city || "",
-                  residence_province: customer.residence_province || "",
-                  residence_region: customer.residence_region || "",
-                  residence_state: customer.residence_state || "",
-                  domicile_address: customer.domicile_address || "",
-                  domicile_zipcode: customer.domicile_zipcode || "",
-                  domicile_city: customer.domicile_city || "",
-                  domicile_province: customer.domicile_province || "",
-                  domicile_region: customer.domicile_region || "",
-                  domicile_state: customer.domicile_state || "",
-                  mobile: customer.mobile || "",
-                  email: customer.email || "",
-                  publicCode: customer.publicCode || "",
-                  subscriber: customer.subscriber || "",
-                  arrived_from: customer.arrived_from || "",
-                  fidelity_card_number: customer.fidelity_card_number || "",
-                  consent_marketing: customer.consent_marketing || "",
-                  consent_third_parties_marketing: customer.consent_third_parties_marketing || "",
-                  dateCreation: customer.dateCreationProduct || customer.dateCreation || "",
-                  dateLastUpdate: customer.dateLastUpdateProduct || customer.dateLastUpdate || "",
-                  deleted: customer.deleted || "",
+                  gender: customer.gender || existing.gender || "",
+                  name: customer.name || existing.name || "",
+                  surname: customer.surname || existing.surname || "",
+                  birth_data: customer.birth_data || existing.birth_data || "",
+                  vat_number: customer.vat_number || existing.vat_number || "",
+                  residence_address: customer.residence_address || existing.residence_address || "",
+                  residence_zipcode: customer.residence_zipcode || existing.residence_zipcode || "",
+                  residence_city: customer.residence_city || existing.residence_city || "",
+                  residence_province: customer.residence_province || existing.residence_province || "",
+                  residence_region: customer.residence_region || existing.residence_region || "",
+                  residence_state: customer.residence_state || existing.residence_state || "",
+                  domicile_address: customer.domicile_address || existing.domicile_address || "",
+                  domicile_zipcode: customer.domicile_zipcode || existing.domicile_zipcode || "",
+                  domicile_city: customer.domicile_city || existing.domicile_city || "",
+                  domicile_province: customer.domicile_province || existing.domicile_province || "",
+                  domicile_region: customer.domicile_region || existing.domicile_region || "",
+                  domicile_state: customer.domicile_state || existing.domicile_state || "",
+                  mobile: customer.mobile || existing.mobile || "",
+                  email: customer.email || existing.email || "",
+                  publicCode: customer.publicCode || existing.publicCode || "",
+                  subscriber: customer.subscriber || existing.subscriber || "",
+                  arrived_from: customer.arrived_from || existing.arrived_from || "",
+                  fidelity_card_number: customer.fidelity_card_number || existing.fidelity_card_number || "",
+                  consent_marketing: customer.consent_marketing || existing.consent_marketing || "",
+                  consent_third_parties_marketing: customer.consent_third_parties_marketing || existing.consent_third_parties_marketing || "",
+                  dateCreation: customer.dateCreationProduct || customer.dateCreation || existing.dateCreation || "",
+                  dateLastUpdate: incomingLastUpdate, // Aggiorna con la nuova data se più recente
+                  deleted: customer.deleted || existing.deleted || "",
                   restaurant_code,
                   subscriber_code,
                   updateAt: new Date(), // Assicura che il timestamp di aggiornamento sia corretto
@@ -336,7 +366,10 @@ export async function POST(request: NextRequest) {
                 
                 await prisma.customer.update({
                   where: { id: existing.id },
-                  data: filteredCustomerData,
+                  data: {
+                    ...filteredCustomerData,
+                    idCustomer: effectiveCustomerId // Assicura che idCustomer sia impostato correttamente
+                  },
                 });
                 console.log(`[${getItalianDateString()}] Cliente con idCustomer ${customer.idCustomer} aggiornato con successo.`);
                 aggiornati++;
@@ -383,7 +416,11 @@ export async function POST(request: NextRequest) {
                 console.log(JSON.stringify(filteredCustomerData, null, 2));
                 
                 await prisma.customer.create({
-                  data: filteredCustomerData,
+                  data: {
+                    ...filteredCustomerData,
+                    idCustomer: effectiveCustomerId, // Assicura che idCustomer sia impostato correttamente
+                    createdAt: new Date()
+                  },
                 });
                 console.log(`[${getItalianDateString()}] Nuovo cliente con idCustomer ${customer.idCustomer} creato con successo.`);
                 creati++;
@@ -394,7 +431,7 @@ export async function POST(request: NextRequest) {
               errori++;
             }
       }
-      console.log(`[${getItalianDateString()}] Completato processamento clienti: ${aggiornati} aggiornati, ${creati} creati, ${errori} errori`);
+      console.log(`[${getItalianDateString()}] Completato processamento clienti: ${aggiornati} aggiornati, ${creati} creati, ${saltati} saltati (data non recente), ${errori} errori`);
     }
 
     const duration = ((Date.now() - start) / 1000).toFixed(2);
