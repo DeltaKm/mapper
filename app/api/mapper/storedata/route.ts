@@ -288,9 +288,19 @@ export async function POST(request: NextRequest) {
                   continue;
                 }
                 
-                // Cerca per idCustomer
+                // Cerca per idCustomer OPPURE per email NEL STESSO RESTAURANT
                 existing = await prisma.customer.findFirst({
-                  where: { idCustomer: effectiveCustomerId }
+                  where: {
+                    AND: [
+                      { restaurant_code },
+                      {
+                        OR: [
+                          { idCustomer: effectiveCustomerId },
+                          ...(customer.email ? [{ email: customer.email }] : [])
+                        ].filter(Boolean)
+                      }
+                    ]
+                  }
                 });
               } else {
                 // LOGICA NON-APP
@@ -298,14 +308,29 @@ export async function POST(request: NextRequest) {
                   // Ha idCustomerExt → salvalo in idCustomer
                   effectiveCustomerId = customer.idCustomerExt;
                   existing = await prisma.customer.findFirst({
-                    where: { idCustomer: effectiveCustomerId }
+                    where: {
+                      AND: [
+                        { restaurant_code },
+                        {
+                          OR: [
+                            { idCustomer: effectiveCustomerId },
+                            ...(customer.email ? [{ email: customer.email }] : [])
+                          ].filter(Boolean)
+                        }
+                      ]
+                    }
                   });
                 } else {
                   // NON ha idCustomerExt → idCustomer = "" e cerca per email
                   effectiveCustomerId = "";
                   if (customer.email) {
                     existing = await prisma.customer.findFirst({
-                      where: { email: customer.email }
+                      where: {
+                        AND: [
+                          { restaurant_code },
+                          { email: customer.email }
+                        ]
+                      }
                     });
                   }
                 }
