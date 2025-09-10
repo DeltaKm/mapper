@@ -5,7 +5,7 @@ import moment from "moment-timezone";
 import pLimit from "p-limit";
 import { updateCustomerOrders } from "@/app/lib/updateCustomerOrders";
 
-const MAX_MB = 16; // Ridotto da 32MB a 16MB
+const MAX_MB = 32; // Ridotto da 32MB a 16MB
 const CONCURRENCY = 3; // Ridotto da 5 a 3 per limitare uso memoria
 
 function getItalianDate(): Date {
