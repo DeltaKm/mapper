@@ -67,6 +67,20 @@ model RequestLog {
   createdAt DateTime @default(now())
 }
 
+model AsyncJob {
+  id              String    @id @map("_id")
+  status          String    // 'queued', 'processing', 'completed', 'failed'
+  progress        Int?      @default(0)
+  restaurant_code String
+  subscriber_code String
+  payload         Json
+  result          Json?
+  error           String?
+  createdAt       DateTime  @default(now())
+  startedAt       DateTime?
+  completedAt     DateTime?
+}
+
 // -_-' ???
 model TicketList {
   id                  String                  @id @default(auto()) @map("_id") @db.ObjectId

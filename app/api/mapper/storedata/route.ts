@@ -4,9 +4,10 @@ import prisma from "@/app/lib/prisma";
 import moment from "moment-timezone";
 import pLimit from "p-limit";
 import { updateCustomerOrders } from "@/app/lib/updateCustomerOrders";
+import { batchUpdateCustomerOrders } from "@/app/lib/batchUpdateCustomerOrders";
 
-const MAX_MB = 32; // Ridotto da 32MB a 16MB
-const CONCURRENCY = 3; // Ridotto da 5 a 3 per limitare uso memoria
+const MAX_MB = 32; // da ridurre da 32MB a 16MB
+const CONCURRENCY = 5; // Bilanciato: velocità vs memoria
 
 function getItalianDate(): Date {
   return moment().tz("Europe/Rome").toDate();
@@ -48,20 +49,54 @@ export async function POST(request: NextRequest) {
     const restaurant_code = searchParams.get("restaurant_code") ?? "";
     const subscriber_code = searchParams.get("subscriber_code") ?? "";
 
-    // Rimuoviamo la creazione di content per evitare duplicazione in memoria
-
-    // COMMENTATO: Salvataggio payload completo per risparmiare spazio DB
-    // await prisma.data.create({
-    //   data: {
-    //     content,
-    //     createdAt: getItalianDate(),
-    //     createdAtIta: getItalianDateString(),
-    //   },
-    // });
-
     // Log minimale per ridurre uso memoria
     const clientIP = request.headers.get('x-forwarded-for')?.split(',')[0] || 'unknown';
     console.log(`[${getItalianDateString()}] Request from ${clientIP} - Payload: customers=${body.customerList?.length || 0}, movements=${body.movimenti?.length || 0}, sales=${body.movimentivend?.length || 0}, tickets=${body.ticketList?.length || 0}`);
+
+    // RISPOSTA IMMEDIATA - Libera il gateway subito
+    const response = NextResponse.json({ 
+      status: "success", 
+      message: "Richiesta ricevuta e in processamento",
+      timestamp: getItalianDateString(),
+      received: {
+        customers: body.customerList?.length || 0,
+        movements: body.movimenti?.length || 0, 
+        sales: body.movimentivend?.length || 0,
+        tickets: body.ticketList?.length || 0
+      }
+    }, { status: 201 });
+
+    // Processa i dati in background (non-blocking)
+    processDataInBackground(body, restaurant_code, subscriber_code, clientIP, start, limit);
+
+    return response;
+  } catch (error) {
+    console.error("Errore POST:", error);
+    
+    // Anche in caso di errore, restituisce sempre successo
+    return NextResponse.json({ 
+      status: "success", 
+      message: "Richiesta ricevuta",
+      timestamp: getItalianDateString(),
+      note: "Errore registrato per analisi"
+    }, { status: 201 });
+  }
+}
+
+// Funzione per processare i dati in background
+async function processDataInBackground(
+  body: any, 
+  restaurant_code: string, 
+  subscriber_code: string, 
+  clientIP: string, 
+  start: number,
+  limit: any
+) {
+  try {
+    console.log(`[${getItalianDateString()}] Inizio processamento background...`);
+    
+    // Inizializza stats object
+    const stats: any = {};
 
     // Salva i dati dei movimenti nella collezione SignaMovimenti
     if (Array.isArray(body.movimenti) && body.movimenti.length > 0) {
@@ -121,69 +156,87 @@ export async function POST(request: NextRequest) {
     if (Array.isArray(body.movimentivend) && body.movimentivend.length > 0) {
       console.log(`[${getItalianDateString()}] Processando ${body.movimentivend.length} movimenti vendita Signa...`);
       let salvati = 0, saltati = 0, errori = 0;
+      const movementsForBatch: any[] = [];
 
-      // Processamento sequenziale per ridurre uso memoria
-      for (const movimento of body.movimentivend) {
-            try {
-              // Verifica se esiste già un documento con lo stesso IDMovimentoPOS
-              const existingMovimentoVend = await prisma.signaMovimentiVend.findFirst({
-                where: {
-                  IDMovimentoPOS: movimento.IDMovimentoPOS?.toString() || ""
-                }
-              });
-              
-              // Se esiste già, salta questo movimento
-              if (existingMovimentoVend) {
-                console.log(`[${getItalianDateString()}] Movimento Signa con IDMovimentoPOS ${movimento.IDMovimentoPOS} già presente in SignaMovimentiVend, skip.`);
-                saltati++;
-                continue; // Salta solo l'iterazione corrente
-              }
-              
-              // Se non esiste, procedi con il salvataggio
-              await prisma.$runCommandRaw({
-                insert: "SignaMovimentiVend",
-                documents: [
-                  {
-                    movimentoData: movimento,
-                    IDMovimentoPOS: movimento.IDMovimentoPOS?.toString() || "", // Salva IDMovimentoPOS come campo separato
-                    restaurant_code,
-                    subscriber_code: "SIGNA",
-                    createdAt: new Date(),
-                    updateAt: new Date(),
-                  },
-                ],
-              });
-              salvati++;
-
-              const saleDateTime = movimento.PagamentoData && movimento.PagamentoOra
-                ? new Date(
-                    moment(`${movimento.PagamentoData} ${movimento.PagamentoOra}`, "DD/MM/YYYY HH:mm:ss").toISOString()
-                  )
-                : new Date();
-
-              const totalAmount = Array.isArray(movimento.pagamenti)
-                ? movimento.pagamenti.reduce((sum: number, p: any) => sum + (p.Importo || 0), 0)
-                : 0;
-
-              const prodotti = movimento.prodotti || [];
-
-              // Utilizzo updateCustomerOrders per aggiornare i campi aggregati
-              try {
-                const idCustomer = movimento.customer?.idCustomerExt || movimento.customer?.idCustomer;
-                if (!idCustomer) {
-                  console.warn(`[${getItalianDateString()}] Movimento Signa con IDMovimentoPOS ${movimento.IDMovimentoPOS} senza idCustomer, skip updateCustomerOrders.`);
-                  continue;
-                }
-                await updateCustomerOrders(movimento, "signa", idCustomer, restaurant_code);
-              } catch (updateError) {
-                console.error(`[${getItalianDateString()}] Errore nell'aggiornamento CustomerOrders per movimento Signa ${movimento.IDMovimentoPOS}: ${updateError}`);
-              }
-            } catch (error) {
-              errori++;
-              console.error(`[${getItalianDateString()}] Errore nel processare movimento vendita Signa con IDMovimentoPOS ${movimento.IDMovimentoPOS}: ${error}`);
+      // Processamento parallelo con limite di concorrenza
+      const tasks = body.movimentivend.map((movimento: any) => 
+        limit(async () => {
+          try {
+            // Verifica se esiste già un documento con lo stesso IDMovimentoPOS
+            // Usa findMany per evitare errori di conversione DateTime
+            const existingMovimenti = await prisma.signaMovimentiVend.findMany({
+              where: {
+                IDMovimentoPOS: movimento.IDMovimentoPOS?.toString() || ""
+              },
+              select: {
+                id: true,
+                IDMovimentoPOS: true
+              },
+              take: 1
+            });
+            
+            const existingMovimentoVend = existingMovimenti.length > 0 ? existingMovimenti[0] : null;
+            
+            // Se esiste già, salta questo movimento
+            if (existingMovimentoVend) {
+              console.log(`Ordine Signa con IDMovimentoPOS ${movimento.IDMovimentoPOS} già presente, skip.`);
+              saltati++;
+              return { status: 'skipped' };
             }
+              
+            // Se non esiste, procedi con il salvataggio
+            await prisma.$runCommandRaw({
+              insert: "SignaMovimentiVend",
+              documents: [{
+                movimentoData: movimento,
+                IDMovimentoPOS: movimento.IDMovimentoPOS?.toString() || "",
+                restaurant_code: restaurant_code,
+                subscriber_code: subscriber_code
+              }]
+            });
+            salvati++;
+
+            // Aggiungi alla lista per batch update invece di chiamare updateCustomerOrders
+            const idCustomer = movimento.customer?.idCustomerExt || movimento.customer?.idCustomer;
+            if (idCustomer) {
+              movementsForBatch.push({
+                movimento: movimento,
+                sourceType: "signa" as const,
+                idCustomer: idCustomer,
+                restaurant_code: restaurant_code
+              });
+            }
+            
+            return { status: 'created' };
+          } catch (error) {
+            console.error(`Errore nel salvataggio movimento Signa ${movimento.IDMovimentoPOS}: ${error}`);
+            errori++;
+            return { status: 'error', error };
+          }
+        })
+      );
+      
+      await Promise.all(tasks);
+      
+      // Batch update CustomerOrders per tutti i movimenti
+      if (movementsForBatch.length > 0) {
+        try {
+          console.log(`[${getItalianDateString()}] Inizio batch update CustomerOrders per ${movementsForBatch.length} movimenti...`);
+          await batchUpdateCustomerOrders(movementsForBatch);
+          console.log(`[${getItalianDateString()}] Completato batch update CustomerOrders`);
+        } catch (batchError) {
+          console.error(`[${getItalianDateString()}] Errore nel batch update CustomerOrders:`, batchError);
+        }
       }
+      
       console.log(`[${getItalianDateString()}] Completato processamento movimenti vendita Signa: ${salvati} salvati, ${saltati} saltati, ${errori} errori`);
+      
+      stats.movimentivend = {
+        processed: body.movimentivend.length,
+        created: salvati,
+        skipped: saltati,
+        errors: errori
+      };
     }
 
     if (Array.isArray(body.TicketList) && body.TicketList.length > 0) {
@@ -460,12 +513,27 @@ export async function POST(request: NextRequest) {
     }
 
     const duration = ((Date.now() - start) / 1000).toFixed(2);
-    return NextResponse.json({ status: "success", duration: `${duration}s` }, { status: 201 });
+    console.log(`[${getItalianDateString()}] Completato processamento background in ${duration}s: ${JSON.stringify(stats)}`);
   } catch (error) {
-    console.error("Errore POST:", error);
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Errore generico" },
-      { status: 500 }
-    );
+    console.error("Errore nel processamento background:", error);
+    
+    // Salva l'errore nel database per analisi successiva
+    try {
+      await prisma.requestLog.create({
+        data: {
+          method: "POST",
+          url: "/api/mapper/storedata",
+          status: 500,
+          error: error instanceof Error ? error.message : "Errore generico",
+          headers: {
+            restaurant_code: restaurant_code,
+            subscriber_code: subscriber_code,
+            clientIP: clientIP
+          }
+        }
+      });
+    } catch (logError) {
+      console.error("Errore nel salvare log:", logError);
+    }
   }
 }
