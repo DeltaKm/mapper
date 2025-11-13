@@ -3,8 +3,6 @@ import { Buffer } from "buffer";
 import prisma from "@/app/lib/prisma";
 import moment from "moment-timezone";
 import pLimit from "p-limit";
-import { updateCustomerOrders } from "@/app/lib/updateCustomerOrders";
-import { batchUpdateCustomerOrders } from "@/app/lib/batchUpdateCustomerOrders";
 
 const MAX_MB = 32; // da ridurre da 32MB a 16MB
 const CONCURRENCY = 5; // Bilanciato: velocità vs memoria
@@ -15,6 +13,15 @@ function getItalianDate(): Date {
 
 function getItalianDateString(): string {
   return moment().tz("Europe/Rome").format("YYYY-MM-DD HH:mm:ss");
+}
+
+function parseSignaDate(data: string, ora: string): Date {
+  try {
+    const dataPart = data.split(' ')[0];
+    return new Date(moment(`${dataPart} ${ora}`, "DD/MM/YYYY HH:mm:ss").toISOString());
+  } catch {
+    return new Date();
+  }
 }
 
 async function parseLargeJSON(request: NextRequest): Promise<any> {
@@ -144,99 +151,64 @@ async function processDataInBackground(
             },
           });
           salvati++;
+
+          // Mappa CustomerOrdersFlat se ci sono dettagli e idCustomerExt
+          if (movimento.customer?.idCustomerExt && Array.isArray(movimento.dettagli)) {
+            for (const dettaglio of movimento.dettagli) {
+              try {
+                const orderDate = parseSignaDate(movimento.MovimentoData || "", movimento.MovimentoOra || "");
+                
+                await prisma.customerOrdersFlat.upsert({
+                  where: {
+                    detail_id: `${restaurant_code}_${movimento.IDReferencePOS}_${dettaglio.Riga}`
+                  },
+                  update: {
+                    updated_at: new Date()
+                  },
+                  create: {
+                    detail_id: `${restaurant_code}_${movimento.IDReferencePOS}_${dettaglio.Riga}`,
+                    idCustomer: movimento.customer.idCustomerExt,
+                    order_id: movimento.IDReferencePOS?.toString() || "",
+                    public_code: restaurant_code,
+                    source: "retail",
+                    
+                    order_date: orderDate,
+                    order_time: movimento.MovimentoOra || "",
+                    order_year: movimento.MovimentoAnno || new Date().getFullYear(),
+                    
+                    movement_type: dettaglio.CodTipoMovimento || "",
+                    is_return: dettaglio.CodTipoMovimento === "RC",
+                    
+                    product_code: dettaglio.CodArticolo || "",
+                    product_name: dettaglio.Article_Description_Short || "",
+                    
+                    category: dettaglio.Famiglia || "",
+                    subcategory: dettaglio.SottoFamiglia || "",
+                    brand: dettaglio.Marchio || "",
+                    
+                    season: dettaglio.CodStagione || "",
+                    color: dettaglio.Colore || "",
+                    size: dettaglio.Taglia || "",
+                    
+                    quantity: parseFloat(dettaglio.Quantita?.toString() || "0") || 0,
+                    unit_price: parseFloat(dettaglio.Valore?.toString() || "0") || 0,
+                    total_amount: (parseFloat(dettaglio.Quantita?.toString() || "0") || 0) * (parseFloat(dettaglio.Valore?.toString() || "0") || 0),
+                    
+                    created_at: new Date(),
+                    updated_at: new Date()
+                  }
+                });
+              } catch (flatError) {
+                console.error(`[${getItalianDateString()}] Errore salvando CustomerOrdersFlat per dettaglio ${dettaglio.Riga}: ${flatError}`);
+              }
+            }
+          }
         } catch (error) {
           console.error(`[${getItalianDateString()}] Errore nel salvare movimento Signa con IDReferencePOS ${movimento.IDReferencePOS}: ${error}`);
           errori++;
         }
       }
       console.log(`[${getItalianDateString()}] Completato processamento movimenti Signa: ${salvati} salvati, ${saltati} saltati, ${errori} errori`);
-    }
-    
-    // Salva i dati delle vendite nella collezione SignaMovimentiVend
-    if (Array.isArray(body.movimentivend) && body.movimentivend.length > 0) {
-      console.log(`[${getItalianDateString()}] Processando ${body.movimentivend.length} movimenti vendita Signa...`);
-      let salvati = 0, saltati = 0, errori = 0;
-      const movementsForBatch: any[] = [];
-
-      // Processamento parallelo con limite di concorrenza
-      const tasks = body.movimentivend.map((movimento: any) => 
-        limit(async () => {
-          try {
-            // Verifica se esiste già un documento con lo stesso IDMovimentoPOS
-            // Usa findMany per evitare errori di conversione DateTime
-            const existingMovimenti = await prisma.signaMovimentiVend.findMany({
-              where: {
-                IDMovimentoPOS: movimento.IDMovimentoPOS?.toString() || ""
-              },
-              select: {
-                id: true,
-                IDMovimentoPOS: true
-              },
-              take: 1
-            });
-            
-            const existingMovimentoVend = existingMovimenti.length > 0 ? existingMovimenti[0] : null;
-            
-            // Se esiste già, salta questo movimento
-            if (existingMovimentoVend) {
-              console.log(`Ordine Signa con IDMovimentoPOS ${movimento.IDMovimentoPOS} già presente, skip.`);
-              saltati++;
-              return { status: 'skipped' };
-            }
-              
-            // Se non esiste, procedi con il salvataggio
-            await prisma.$runCommandRaw({
-              insert: "SignaMovimentiVend",
-              documents: [{
-                movimentoData: movimento,
-                IDMovimentoPOS: movimento.IDMovimentoPOS?.toString() || "",
-                restaurant_code: restaurant_code,
-                subscriber_code: subscriber_code
-              }]
-            });
-            salvati++;
-
-            // Aggiungi alla lista per batch update invece di chiamare updateCustomerOrders
-            const idCustomer = movimento.customer?.idCustomerExt || movimento.customer?.idCustomer;
-            if (idCustomer) {
-              movementsForBatch.push({
-                movimento: movimento,
-                sourceType: "signa" as const,
-                idCustomer: idCustomer,
-                restaurant_code: restaurant_code
-              });
-            }
-            
-            return { status: 'created' };
-          } catch (error) {
-            console.error(`Errore nel salvataggio movimento Signa ${movimento.IDMovimentoPOS}: ${error}`);
-            errori++;
-            return { status: 'error', error };
-          }
-        })
-      );
-      
-      await Promise.all(tasks);
-      
-      // Batch update CustomerOrders per tutti i movimenti
-      if (movementsForBatch.length > 0) {
-        try {
-          console.log(`[${getItalianDateString()}] Inizio batch update CustomerOrders per ${movementsForBatch.length} movimenti...`);
-          await batchUpdateCustomerOrders(movementsForBatch);
-          console.log(`[${getItalianDateString()}] Completato batch update CustomerOrders`);
-        } catch (batchError) {
-          console.error(`[${getItalianDateString()}] Errore nel batch update CustomerOrders:`, batchError);
-        }
-      }
-      
-      console.log(`[${getItalianDateString()}] Completato processamento movimenti vendita Signa: ${salvati} salvati, ${saltati} saltati, ${errori} errori`);
-      
-      stats.movimentivend = {
-        processed: body.movimentivend.length,
-        created: salvati,
-        skipped: saltati,
-        errors: errori
-      };
     }
 
     if (Array.isArray(body.TicketList) && body.TicketList.length > 0) {
@@ -301,12 +273,59 @@ async function processDataInBackground(
                 errori++;
               }
 
-              // Utilizzo updateCustomerOrders per aggiornare i campi aggregati
-              try {
-                await updateCustomerOrders(ticket, "dylogapp", orderWebInfo.IDCustomer, restaurant_code);
-              } catch (updateError) {
-                console.error(`[${getItalianDateString()}] Errore nell'aggiornamento CustomerOrders per ticket DylogApp ${orderWebInfo.IDTickets}: ${updateError}`);
-                erroriUpdate++;
+              // Mappa CustomerOrdersFlat per ogni item in DetailList
+              if (orderWebInfo?.IDCustomer && Array.isArray(ticket.DetailList)) {
+                for (let index = 0; index < ticket.DetailList.length; index++) {
+                  const detail = ticket.DetailList[index];
+                  
+                  try {
+                    const orderDate = new Date(ticket.DateBill);
+                    
+                    await prisma.customerOrdersFlat.upsert({
+                      where: {
+                        detail_id: `${restaurant_code}_${ticket.IDTickets}_${detail.BillRow || (index + 1)}`
+                      },
+                      update: {
+                        updated_at: new Date()
+                      },
+                      create: {
+                        detail_id: `${restaurant_code}_${ticket.IDTickets}_${detail.BillRow || (index + 1)}`,
+                        idCustomer: orderWebInfo.IDCustomer,
+                        order_id: ticket.IDTickets?.toString() || "",
+                        public_code: restaurant_code,
+                        source: "restaurant",
+                        
+                        order_date: orderDate,
+                        order_time: moment(ticket.DateBill).format("HH:mm:ss"),
+                        order_year: orderDate.getFullYear(),
+                        
+                        movement_type: ticket.DocTipo || "",
+                        is_return: false,
+                        
+                        product_code: detail.Code || "",
+                        product_name: detail.Name || "",
+                        
+                        category: detail.GroupDescription || "",
+                        subcategory: "",
+                        brand: "",
+                        
+                        season: "",
+                        color: "",
+                        size: "",
+                        
+                        quantity: parseFloat(detail.Qta?.toString() || "0") || 0,
+                        unit_price: parseFloat(detail.Price?.toString() || "0") || 0,
+                        total_amount: (parseFloat(detail.Qta?.toString() || "0") || 0) * (parseFloat(detail.Price?.toString() || "0") || 0),
+                        
+                        created_at: new Date(),
+                        updated_at: new Date()
+                      }
+                    });
+                  } catch (flatError) {
+                    console.error(`[${getItalianDateString()}] Errore salvando CustomerOrdersFlat per ticket item ${detail.BillRow || index}: ${flatError}`);
+                    erroriUpdate++;
+                  }
+                }
               }
             } catch (error) {
               console.error(`[${getItalianDateString()}] Errore generale nel processare ticket DylogApp: ${error}`);

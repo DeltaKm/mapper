@@ -341,4 +341,59 @@ model CustomerOrders {
   @@index([restaurant_code])
   @@index([idCustomer])
 }
+
+// Modello flat per query veloci su filtri vendite (un record per riga prodotto)
+model CustomerOrdersFlat {
+  id            String   @id @default(auto()) @map("_id") @db.ObjectId
+  detail_id     String   @unique // Chiave univoca: ${public_code}_${order_id}_${riga}
+  
+  // Identificativi
+  idCustomer    String   @default("") // idCustomerExt (Signa) / IDCustomer (Bacco)
+  order_id      String   // IDReferencePOS (Signa) / IDTickets (Bacco)
+  public_code   String   // restaurant_code
+  source        String   // "retail" o "restaurant"
+  
+  // Date
+  order_date    DateTime
+  order_time    String   @default("")
+  order_year    Int      @default(0)
+  
+  // Tipo movimento
+  movement_type String   @default("") // CodTipoMovimento (Signa) / DocTipo (Bacco)
+  is_return     Boolean  @default(false)
+  
+  // Prodotto
+  product_code  String   @default("")
+  product_name  String   @default("")
+  
+  // Categorie
+  category      String   @default("")
+  subcategory   String   @default("") // Solo Signa
+  brand         String   @default("") // Solo Signa
+  
+  // Attributi retail (solo Signa)
+  season        String   @default("")
+  color         String   @default("")
+  size          String   @default("")
+  
+  // Quantità e prezzi
+  quantity      Float    @default(0)
+  unit_price    Float    @default(0)
+  total_amount  Float    @default(0)
+  
+  // Metadata
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+  
+  // Indici per performance
+  @@index([idCustomer, order_date])
+  @@index([public_code, source])
+  @@index([category])
+  @@index([product_code])
+  @@index([order_id])
+  @@index([season])
+  @@index([brand])
+  @@index([movement_type])
+  @@index([is_return])
+}
   
