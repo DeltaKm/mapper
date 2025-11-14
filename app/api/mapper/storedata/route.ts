@@ -450,7 +450,7 @@ async function processDataInBackground(
                   consent_marketing: customer.consent_marketing || existing.consent_marketing || "",
                   consent_third_parties_marketing: customer.consent_third_parties_marketing || existing.consent_third_parties_marketing || "",
                   dateCreation: customer.dateCreationProduct || customer.dateCreation || existing.dateCreation || "",
-                  dateLastUpdate: incomingLastUpdate, // Aggiorna con la nuova data se più recente
+                  dateLastUpdate: incomingLastUpdate || existing.dateLastUpdate || "", // Preserva se vuoto
                   deleted: customer.deleted || existing.deleted || "",
                   restaurant_code,
                   subscriber_code,
