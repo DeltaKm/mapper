@@ -19,6 +19,7 @@ model Customer {
   id                              String   @id @default(auto()) @map("_id") @db.ObjectId // MongoDB usa un tipo `String` per l'ID
   idReferenceGateway              String?  @default("")
   idCustomer                      String?  @default("")
+  contact_key                     String?  @default("")
   gender                          String?  @default("")
   name                            String?  @default("")
   surname                         String?  @default("")
@@ -53,6 +54,8 @@ model Customer {
   subscriber_code                 String?  @default("")
   createdAt                       DateTime @default(now())
   updateAt                        DateTime @updatedAt
+
+  @@index([restaurant_code, contact_key])
 }
 
 model RequestLog {
@@ -349,6 +352,7 @@ model CustomerOrdersFlat {
   
   // Identificativi
   idCustomer    String   @default("") // idCustomerExt (Signa) / IDCustomer (Bacco)
+  contact_key   String   @default("")
   order_id      String   // IDReferencePOS (Signa) / IDTickets (Bacco)
   public_code   String   // restaurant_code
   source        String   // "retail" o "restaurant"
@@ -395,5 +399,6 @@ model CustomerOrdersFlat {
   @@index([brand])
   @@index([movement_type])
   @@index([is_return])
+  @@index([contact_key])
 }
   

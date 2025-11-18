@@ -24,6 +24,46 @@ function parseSignaDate(data: string, ora: string): Date {
   }
 }
 
+function normalizeEmail(email?: string | null): string {
+  if (!email) return "";
+  return email.trim().toLowerCase();
+}
+
+function normalizePhone(phone?: string | null): string {
+  if (!phone) return "";
+  return phone.replace(/\D+/g, "");
+}
+
+function computeContactKey(email?: string | null, phone?: string | null): {
+  contactKey: string;
+  normalizedEmail: string;
+  normalizedPhone: string;
+} {
+  const normalizedEmail = normalizeEmail(email);
+  if (normalizedEmail) {
+    return {
+      contactKey: `email:${normalizedEmail}`,
+      normalizedEmail,
+      normalizedPhone: "",
+    };
+  }
+
+  const normalizedPhone = normalizePhone(phone);
+  if (normalizedPhone) {
+    return {
+      contactKey: `phone:${normalizedPhone}`,
+      normalizedEmail: "",
+      normalizedPhone,
+    };
+  }
+
+  return {
+    contactKey: "",
+    normalizedEmail: "",
+    normalizedPhone: "",
+  };
+}
+
 async function parseLargeJSON(request: NextRequest): Promise<any> {
   try {
     // Usa il metodo nativo di Next.js che è più efficiente
@@ -152,48 +192,75 @@ async function processDataInBackground(
           });
           salvati++;
 
-          // Mappa CustomerOrdersFlat se ci sono dettagli e idCustomerExt
-          if (movimento.customer?.idCustomerExt && Array.isArray(movimento.dettagli)) {
+          const movimentoCustomer = movimento.customer || {};
+          const rawMovEmail = typeof movimentoCustomer.email === "string" ? movimentoCustomer.email.trim() : "";
+          const movimentoPhoneCandidates = [
+            movimentoCustomer.mobile,
+            movimentoCustomer.phone,
+            movimentoCustomer.telefono,
+            movimentoCustomer.cellphone,
+          ];
+          const rawMovPhone = movimentoPhoneCandidates.find((value) => typeof value === "string" && value.trim().length > 0) || "";
+          const { contactKey: movimentoContactKey } = computeContactKey(rawMovEmail, rawMovPhone);
+
+          const movimentoCustomerId = movimentoCustomer.idCustomerExt || "";
+
+          // Mappa CustomerOrdersFlat se ci sono dettagli e almeno un identificativo (idCustomerExt o contact_key)
+          if ((movimentoCustomerId || movimentoContactKey) && Array.isArray(movimento.dettagli)) {
             for (const dettaglio of movimento.dettagli) {
               try {
                 const orderDate = parseSignaDate(movimento.MovimentoData || "", movimento.MovimentoOra || "");
-                
+                const quantity = parseFloat(dettaglio.Quantita?.toString() || "0") || 0;
+                const unitPrice = parseFloat(dettaglio.Valore?.toString() || "0") || 0;
+
                 await prisma.customerOrdersFlat.upsert({
                   where: {
                     detail_id: `${restaurant_code}_${movimento.IDReferencePOS}_${dettaglio.Riga}`
                   },
                   update: {
+                    idCustomer: movimentoCustomerId,
+                    contact_key: movimentoContactKey,
+                    order_date: orderDate,
+                    order_time: movimento.MovimentoOra || "",
+                    order_year: movimento.MovimentoAnno || new Date().getFullYear(),
+                    movement_type: dettaglio.CodTipoMovimento || "",
+                    is_return: dettaglio.CodTipoMovimento === "RC",
+                    product_code: dettaglio.CodArticolo || "",
+                    product_name: dettaglio.Article_Description_Short || "",
+                    category: dettaglio.Famiglia || "",
+                    subcategory: dettaglio.SottoFamiglia || "",
+                    brand: dettaglio.Marchio || "",
+                    season: dettaglio.CodStagione || "",
+                    color: dettaglio.Colore || "",
+                    size: dettaglio.Taglia || "",
+                    quantity,
+                    unit_price: unitPrice,
+                    total_amount: quantity * unitPrice,
                     updated_at: new Date()
                   },
                   create: {
                     detail_id: `${restaurant_code}_${movimento.IDReferencePOS}_${dettaglio.Riga}`,
-                    idCustomer: movimento.customer.idCustomerExt,
+                    idCustomer: movimentoCustomerId,
+                    contact_key: movimentoContactKey,
                     order_id: movimento.IDReferencePOS?.toString() || "",
                     public_code: restaurant_code,
                     source: "retail",
-                    
                     order_date: orderDate,
                     order_time: movimento.MovimentoOra || "",
                     order_year: movimento.MovimentoAnno || new Date().getFullYear(),
-                    
                     movement_type: dettaglio.CodTipoMovimento || "",
                     is_return: dettaglio.CodTipoMovimento === "RC",
-                    
                     product_code: dettaglio.CodArticolo || "",
                     product_name: dettaglio.Article_Description_Short || "",
-                    
                     category: dettaglio.Famiglia || "",
                     subcategory: dettaglio.SottoFamiglia || "",
                     brand: dettaglio.Marchio || "",
-                    
                     season: dettaglio.CodStagione || "",
                     color: dettaglio.Colore || "",
                     size: dettaglio.Taglia || "",
-                    
-                    quantity: parseFloat(dettaglio.Quantita?.toString() || "0") || 0,
-                    unit_price: parseFloat(dettaglio.Valore?.toString() || "0") || 0,
-                    total_amount: (parseFloat(dettaglio.Quantita?.toString() || "0") || 0) * (parseFloat(dettaglio.Valore?.toString() || "0") || 0),
-                    
+                    quantity,
+                    unit_price: unitPrice,
+                    total_amount: quantity * unitPrice,
                     created_at: new Date(),
                     updated_at: new Date()
                   }
@@ -228,8 +295,29 @@ async function processDataInBackground(
                 }
               }
 
-              if (!orderWebInfo || !orderWebInfo.IDCustomer) {
-                console.warn(`[${getItalianDateString()}] Ticket DylogApp senza orderWebInfo o IDCustomer, skip.`);
+              const rawTicketEmailCandidates = [
+                typeof orderWebInfo?.Email === "string" ? orderWebInfo.Email.trim() : "",
+                typeof ticket.Email === "string" ? ticket.Email.trim() : "",
+              ].filter(Boolean);
+              const rawTicketEmail = rawTicketEmailCandidates.length > 0 ? rawTicketEmailCandidates[0] : "";
+
+              const ticketPhoneCandidates = [
+                orderWebInfo?.Telefono,
+                orderWebInfo?.Phone,
+                orderWebInfo?.Mobile,
+                orderWebInfo?.Cellulare,
+                ticket.Mobile,
+                ticket.Phone,
+              ];
+              const rawTicketPhone = ticketPhoneCandidates.find((value) => typeof value === "string" && value.trim().length > 0) || "";
+              const {
+                contactKey: ticketContactKey,
+              } = computeContactKey(rawTicketEmail, rawTicketPhone);
+
+              const orderCustomerId = orderWebInfo?.IDCustomer || "";
+
+              if (!orderWebInfo || (!orderCustomerId && !ticketContactKey)) {
+                console.warn(`[${getItalianDateString()}] Ticket DylogApp senza identificativi cliente utili, skip.`);
                 saltati++;
                 continue;
               }
@@ -273,50 +361,66 @@ async function processDataInBackground(
                 errori++;
               }
 
+              const canMapCustomer = Boolean(orderCustomerId || ticketContactKey);
+
               // Mappa CustomerOrdersFlat per ogni item in DetailList
-              if (orderWebInfo?.IDCustomer && Array.isArray(ticket.DetailList)) {
+              if (canMapCustomer && Array.isArray(ticket.DetailList)) {
                 for (let index = 0; index < ticket.DetailList.length; index++) {
                   const detail = ticket.DetailList[index];
                   
                   try {
                     const orderDate = new Date(ticket.DateBill);
-                    
+                    const quantity = parseFloat(detail.Qta?.toString() || "0") || 0;
+                    const unitPrice = parseFloat(detail.Price?.toString() || "0") || 0;
+
                     await prisma.customerOrdersFlat.upsert({
                       where: {
                         detail_id: `${restaurant_code}_${ticket.IDTickets}_${detail.BillRow || (index + 1)}`
                       },
                       update: {
+                        idCustomer: orderCustomerId,
+                        contact_key: ticketContactKey,
+                        order_date: orderDate,
+                        order_time: moment(ticket.DateBill).format("HH:mm:ss"),
+                        order_year: orderDate.getFullYear(),
+                        movement_type: ticket.DocTipo || "",
+                        is_return: false,
+                        product_code: detail.Code || "",
+                        product_name: detail.Name || "",
+                        category: detail.GroupDescription || "",
+                        subcategory: "",
+                        brand: "",
+                        season: "",
+                        color: "",
+                        size: "",
+                        quantity,
+                        unit_price: unitPrice,
+                        total_amount: quantity * unitPrice,
                         updated_at: new Date()
                       },
                       create: {
                         detail_id: `${restaurant_code}_${ticket.IDTickets}_${detail.BillRow || (index + 1)}`,
-                        idCustomer: orderWebInfo.IDCustomer,
+                        idCustomer: orderCustomerId,
+                        contact_key: ticketContactKey,
                         order_id: ticket.IDTickets?.toString() || "",
                         public_code: restaurant_code,
                         source: "restaurant",
-                        
                         order_date: orderDate,
                         order_time: moment(ticket.DateBill).format("HH:mm:ss"),
                         order_year: orderDate.getFullYear(),
-                        
                         movement_type: ticket.DocTipo || "",
                         is_return: false,
-                        
                         product_code: detail.Code || "",
                         product_name: detail.Name || "",
-                        
                         category: detail.GroupDescription || "",
                         subcategory: "",
                         brand: "",
-                        
                         season: "",
                         color: "",
                         size: "",
-                        
-                        quantity: parseFloat(detail.Qta?.toString() || "0") || 0,
-                        unit_price: parseFloat(detail.Price?.toString() || "0") || 0,
-                        total_amount: (parseFloat(detail.Qta?.toString() || "0") || 0) * (parseFloat(detail.Price?.toString() || "0") || 0),
-                        
+                        quantity,
+                        unit_price: unitPrice,
+                        total_amount: quantity * unitPrice,
                         created_at: new Date(),
                         updated_at: new Date()
                       }
@@ -347,6 +451,11 @@ async function processDataInBackground(
               
               // Data in arrivo (specifica: dateLastUpdateProduct)
               const incomingLastUpdate = customer.dateLastUpdateProduct || "";
+
+              const rawEmail = typeof customer.email === "string" ? customer.email.trim() : "";
+              const phoneCandidates = [customer.mobile, customer.phone, customer.telephone, customer.cellphone];
+              const rawPhone = phoneCandidates.find((value) => typeof value === "string" && value.trim().length > 0) || "";
+              const { contactKey, normalizedEmail } = computeContactKey(rawEmail, rawPhone);
               
               let existing = null;
               let effectiveCustomerId = "";
@@ -359,51 +468,59 @@ async function processDataInBackground(
                   console.warn(`[${getItalianDateString()}] Cliente App senza idCustomer/idCustomerExt, skip.`);
                   continue;
                 }
-                
-                // Cerca per idCustomer OPPURE per email NEL STESSO RESTAURANT
-                existing = await prisma.customer.findFirst({
-                  where: {
-                    AND: [
-                      { restaurant_code },
-                      {
-                        OR: [
-                          { idCustomer: effectiveCustomerId },
-                          ...(customer.email ? [{ email: customer.email }] : [])
-                        ].filter(Boolean)
-                      }
-                    ]
-                  }
-                });
+
+                const searchOr: any[] = [{ idCustomer: effectiveCustomerId }];
+                if (contactKey) {
+                  searchOr.push({ contact_key: contactKey });
+                }
+                const emailVariants = Array.from(new Set([customer.email, normalizedEmail].filter(Boolean)));
+                for (const emailVariant of emailVariants) {
+                  searchOr.push({ email: emailVariant });
+                }
+
+                const whereClause: any = { restaurant_code };
+                if (searchOr.length > 0) {
+                  whereClause.OR = searchOr;
+                }
+
+                existing = await prisma.customer.findFirst({ where: whereClause });
               } else {
                 // LOGICA NON-APP
                 if (customer.idCustomerExt) {
                   // Ha idCustomerExt → salvalo in idCustomer
                   effectiveCustomerId = customer.idCustomerExt;
-                  existing = await prisma.customer.findFirst({
-                    where: {
-                      AND: [
-                        { restaurant_code },
-                        {
-                          OR: [
-                            { idCustomer: effectiveCustomerId },
-                            ...(customer.email ? [{ email: customer.email }] : [])
-                          ].filter(Boolean)
-                        }
-                      ]
-                    }
-                  });
+
+                  const searchOr: any[] = [{ idCustomer: effectiveCustomerId }];
+                  if (contactKey) {
+                    searchOr.push({ contact_key: contactKey });
+                  }
+                  const emailVariants = Array.from(new Set([customer.email, normalizedEmail].filter(Boolean)));
+                  for (const emailVariant of emailVariants) {
+                    searchOr.push({ email: emailVariant });
+                  }
+
+                  const whereClause: any = { restaurant_code };
+                  if (searchOr.length > 0) {
+                    whereClause.OR = searchOr;
+                  }
+
+                  existing = await prisma.customer.findFirst({ where: whereClause });
                 } else {
-                  // NON ha idCustomerExt → idCustomer = "" e cerca per email
+                  // NON ha idCustomerExt → idCustomer = "" e cerca per email/contact key
                   effectiveCustomerId = "";
-                  if (customer.email) {
-                    existing = await prisma.customer.findFirst({
-                      where: {
-                        AND: [
-                          { restaurant_code },
-                          { email: customer.email }
-                        ]
-                      }
-                    });
+
+                  const searchOr: any[] = [];
+                  if (contactKey) {
+                    searchOr.push({ contact_key: contactKey });
+                  }
+                  const emailVariants = Array.from(new Set([customer.email, normalizedEmail].filter(Boolean)));
+                  for (const emailVariant of emailVariants) {
+                    searchOr.push({ email: emailVariant });
+                  }
+
+                  if (searchOr.length > 0) {
+                    const whereClause: any = { restaurant_code, OR: searchOr };
+                    existing = await prisma.customer.findFirst({ where: whereClause });
                   }
                 }
               }
@@ -424,6 +541,7 @@ async function processDataInBackground(
                 const filteredCustomerData = {
                   idReferenceGateway: customer.idReferenceGateway || existing.idReferenceGateway || "",
                   idCustomer: effectiveCustomerId,
+                  contact_key: contactKey || existing.contact_key || "",
                   gender: customer.gender || existing.gender || "",
                   name: customer.name || existing.name || "",
                   surname: customer.surname || existing.surname || "",
@@ -441,8 +559,8 @@ async function processDataInBackground(
                   domicile_province: customer.domicile_province || existing.domicile_province || "",
                   domicile_region: customer.domicile_region || existing.domicile_region || "",
                   domicile_state: customer.domicile_state || existing.domicile_state || "",
-                  mobile: customer.mobile || existing.mobile || "",
-                  email: customer.email || existing.email || "",
+                  mobile: rawPhone || existing.mobile || "",
+                  email: rawEmail || existing.email || "",
                   publicCode: customer.publicCode || existing.publicCode || "",
                   subscriber: customer.subscriber || existing.subscriber || "",
                   arrived_from: customer.arrived_from || existing.arrived_from || "",
@@ -465,7 +583,8 @@ async function processDataInBackground(
                   where: { id: existing.id },
                   data: {
                     ...filteredCustomerData,
-                    idCustomer: effectiveCustomerId // Assicura che idCustomer sia impostato correttamente
+                    idCustomer: effectiveCustomerId, // Assicura che idCustomer sia impostato correttamente
+                    contact_key: contactKey || existing.contact_key || "",
                   },
                 });
                 console.log(`[${getItalianDateString()}] Cliente con idCustomer ${customer.idCustomer} aggiornato con successo.`);
@@ -476,6 +595,7 @@ async function processDataInBackground(
                 const filteredCustomerData = {
                   idReferenceGateway: customer.idReferenceGateway || "",
                   idCustomer: effectiveCustomerId,
+                  contact_key: contactKey,
                   gender: customer.gender || "",
                   name: customer.name || "",
                   surname: customer.surname || "",
@@ -493,8 +613,8 @@ async function processDataInBackground(
                   domicile_province: customer.domicile_province || "",
                   domicile_region: customer.domicile_region || "",
                   domicile_state: customer.domicile_state || "",
-                  mobile: customer.mobile || "",
-                  email: customer.email || "",
+                  mobile: rawPhone || "",
+                  email: rawEmail || "",
                   publicCode: customer.publicCode || "",
                   subscriber: customer.subscriber || "",
                   arrived_from: customer.arrived_from || "",
@@ -516,6 +636,7 @@ async function processDataInBackground(
                   data: {
                     ...filteredCustomerData,
                     idCustomer: effectiveCustomerId, // Assicura che idCustomer sia impostato correttamente
+                    contact_key: contactKey,
                     createdAt: new Date()
                   },
                 });
