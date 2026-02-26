@@ -85,6 +85,48 @@ async function parseLargeJSON(request: NextRequest): Promise<any> {
   }
 }
 
+function notifyExternalBill(data: any, restaurant_code: string, subscriber_code: string): void {
+  const enabled = process.env.NOTIFY_BILL_ENABLED === 'true';
+  const url = process.env.NOTIFY_BILL_URL;
+  const apiKey = process.env.NOTIFY_BILL_API_KEY;
+
+  if (!enabled) {
+    console.log(`[${getItalianDateString()}] NOTIFY_BILL_ENABLED=false, skip notifica`);
+    return;
+  }
+
+  if (!url || !apiKey) {
+    console.log(`[${getItalianDateString()}] NOTIFY_BILL_URL o NOTIFY_BILL_API_KEY non configurati, skip notifica`);
+    return;
+  }
+
+  const payload = {
+    data: data,
+    merchant: restaurant_code,
+    subscriber: subscriber_code
+  };
+
+  fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+    },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(10000),
+  })
+    .then(response => {
+      if (!response.ok) {
+        console.error(`[${getItalianDateString()}] Notifica bill fallita: ${response.status} ${response.statusText}`);
+      } else {
+        console.log(`[${getItalianDateString()}] Notifica bill inviata con successo a ${url}`);
+      }
+    })
+    .catch(error => {
+      console.error(`[${getItalianDateString()}] Errore notifica bill (non bloccante):`, error instanceof Error ? error.message : error);
+    });
+}
+
 export async function POST(request: NextRequest) {
   const start = Date.now();
   const limit = pLimit(CONCURRENCY);
@@ -98,6 +140,9 @@ export async function POST(request: NextRequest) {
   
     const clientIP = request.headers.get('x-forwarded-for')?.split(',')[0] || 'unknown';
     console.log(`[${getItalianDateString()}] Request from ${clientIP} - Payload: customers=${body.customerList?.length || 0}, movements=${body.movimenti?.length || 0}, sales=${body.movimentivend?.length || 0}, tickets=${body.ticketList?.length || 0}`);
+
+    // Notifica server esterno (asincrono, non bloccante)
+    notifyExternalBill(body, restaurant_code, subscriber_code);
 
   
     const response = NextResponse.json({ 
