@@ -5,7 +5,7 @@ import moment from "moment-timezone";
 import pLimit from "p-limit";
 
 const MAX_MB = 32; // da ridurre da 32MB a 16MB
-const CONCURRENCY = 5; // Bilanciato: velocità vs memoria
+const CONCURRENCY = 5; 
 
 function getItalianDate(): Date {
   return moment().tz("Europe/Rome").toDate();
@@ -66,10 +66,9 @@ function computeContactKey(email?: string | null, phone?: string | null): {
 
 async function parseLargeJSON(request: NextRequest): Promise<any> {
   try {
-    // Usa il metodo nativo di Next.js che è più efficiente
+  
     const body = await request.json();
-    
-    // Stima approssimativa della dimensione per sicurezza
+       
     const bodyString = JSON.stringify(body);
     const sizeInMB = Buffer.byteLength(bodyString, 'utf8') / (1024 * 1024);
     
@@ -96,11 +95,11 @@ export async function POST(request: NextRequest) {
     const restaurant_code = searchParams.get("restaurant_code") ?? "";
     const subscriber_code = searchParams.get("subscriber_code") ?? "";
 
-    // Log minimale per ridurre uso memoria
+  
     const clientIP = request.headers.get('x-forwarded-for')?.split(',')[0] || 'unknown';
     console.log(`[${getItalianDateString()}] Request from ${clientIP} - Payload: customers=${body.customerList?.length || 0}, movements=${body.movimenti?.length || 0}, sales=${body.movimentivend?.length || 0}, tickets=${body.ticketList?.length || 0}`);
 
-    // RISPOSTA IMMEDIATA - Libera il gateway subito
+  
     const response = NextResponse.json({ 
       status: "success", 
       message: "Richiesta ricevuta e in processamento",
@@ -113,7 +112,7 @@ export async function POST(request: NextRequest) {
       }
     }, { status: 201 });
 
-    // Processa i dati in background (non-blocking)
+  
     processDataInBackground(body, restaurant_code, subscriber_code, clientIP, start, limit);
 
     return response;
