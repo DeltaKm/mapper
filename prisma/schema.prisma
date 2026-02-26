@@ -228,7 +228,6 @@ model ticketListBaccoDylogAPP {
   updateAt        DateTime @updatedAt
 }
 
-// Modello per dati di vendita standardizzati da diverse fonti
 model SalesData {
   id                String    @id @default(auto()) @map("_id") @db.ObjectId
   sourceType        String    // "signa" o "dylogapp"
@@ -261,7 +260,6 @@ model SalesData {
   @@index([restaurant_code])
 }
 
-// Metriche aggregate per cliente per analisi rapide
 model CustomerSalesSummary {
   id                String    @id @default(auto()) @map("_id") @db.ObjectId
   customerId        String    @unique // ID cliente (riferimento alla collezione Customer)
@@ -291,7 +289,7 @@ model CustomerSalesSummary {
 model SignaMovimentiVend {
   id              String   @id @default(auto()) @map("_id") @db.ObjectId
   movimentoData   Json
-  IDMovimentoPOS  String?  @default("") // Campo aggiunto per controllo duplicati
+  IDMovimentoPOS  String?  @default("") 
   restaurant_code String?  @default("")
   subscriber_code String?  @default("SIGNA")
   createdAt       DateTime @default(now())
@@ -345,7 +343,6 @@ model CustomerOrders {
   @@index([idCustomer])
 }
 
-// Modello flat per query veloci su filtri vendite (un record per riga prodotto)
 model CustomerOrdersFlat {
   id            String   @id @default(auto()) @map("_id") @db.ObjectId
   detail_id     String   @unique // Chiave univoca: ${public_code}_${order_id}_${riga}
@@ -400,5 +397,36 @@ model CustomerOrdersFlat {
   @@index([movement_type])
   @@index([is_return])
   @@index([contact_key])
+}
+
+
+model BookingTable {
+  id String  @id @default(auto()) @map("_id") @db.ObjectId
+
+  subscriber String
+  token String
+  dateTimeStarBooking DateTime
+  userID String
+  userFristName String
+  userSurname String
+  userEmail String
+  userTelephone String
+  userNote String
+  guestSurName String
+  guestFirstName String
+  guestTelephone String
+  guestEmail String
+  noteBooking String
+  noteMerchant String
+  nPersone Int
+  status Int
+  idTavolo String
+  restaurantCode String
+  consent_marketing String
+  booking_channel String
+  customer_typology String
+  
+  userCreatedAt DateTime
+  userUpdatedAt DateTime
 }
   

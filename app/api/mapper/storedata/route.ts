@@ -506,7 +506,7 @@ async function processDataInBackground(
 
                   existing = await prisma.customer.findFirst({ where: whereClause });
                 } else {
-                  // NON ha idCustomerExt → idCustomer = "" e cerca per email/contact key
+                  // NON ha idCustomerExt → preserva idCustomer esistente o lascia vuoto per nuovi clienti
                   effectiveCustomerId = "";
 
                   const searchOr: any[] = [];
@@ -540,7 +540,7 @@ async function processDataInBackground(
                 // Aggiorna il cliente esistente preservando i valori esistenti se non vengono passati nuovi valori
                 const filteredCustomerData = {
                   idReferenceGateway: customer.idReferenceGateway || existing.idReferenceGateway || "",
-                  idCustomer: effectiveCustomerId,
+                  idCustomer: effectiveCustomerId || existing.idCustomer || "",
                   contact_key: contactKey || existing.contact_key || "",
                   gender: customer.gender || existing.gender || "",
                   name: customer.name || existing.name || "",
@@ -583,7 +583,7 @@ async function processDataInBackground(
                   where: { id: existing.id },
                   data: {
                     ...filteredCustomerData,
-                    idCustomer: effectiveCustomerId, // Assicura che idCustomer sia impostato correttamente
+                    idCustomer: effectiveCustomerId || existing.idCustomer || "", // Preserva idCustomer esistente se non viene fornito uno nuovo
                     contact_key: contactKey || existing.contact_key || "",
                   },
                 });
