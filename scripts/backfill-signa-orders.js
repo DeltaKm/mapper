@@ -1,12 +1,3 @@
-/*
- * Script di backfill per creare righe CustomerOrdersFlat mancanti
- * a partire dai documenti SignaMovimenti privi di idCustomerExt.
- *
- * Uso:
- *   node scripts/backfill-signa-orders.js [--restaurant CENE)0000308] [--dry-run]
- *
- * Richiede DATABASE_URL configurata (es. in .env).
- */
 
 require("dotenv").config();
 const { MongoClient } = require("mongodb");

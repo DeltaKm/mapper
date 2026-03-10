@@ -296,10 +296,10 @@ model SignaMovimentiVend {
   updateAt        DateTime @updatedAt
   
   @@index([restaurant_code])
-  @@index([IDMovimentoPOS]) // Indice aggiunto per ottimizzare le query di ricerca duplicati
+  @@index([IDMovimentoPOS]) 
 }
 
-// Modello per i dati grezzi dei movimenti Signa (payload completo)
+
 model SignaMovimenti {
   id                String   @id @default(auto()) @map("_id") @db.ObjectId
   payload           Json

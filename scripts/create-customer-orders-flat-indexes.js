@@ -1,9 +1,3 @@
-/*
- * Script per creare gli indici composti su CustomerOrdersFlat.
- *
- * Uso:
- *   node scripts/create-customer-orders-flat-indexes.js
- */
 
 require("dotenv").config();
 const { MongoClient } = require("mongodb");

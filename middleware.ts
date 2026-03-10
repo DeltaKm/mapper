@@ -50,7 +50,7 @@ export async function middleware(req: NextRequest) {
   const apiKeyQuery = req.nextUrl.searchParams.get('apiKey');
   const apiKey = apiKeyHeader || apiKeyQuery;
 
-  // dacambiare questo console log
+  // da cambiare questo console log
   // console.log("Middleware: API Key ricevuta =", apiKey, "| API Key attesa =", process.env.NEXT_PUBLIC_API_KEY);
 
   if (!apiKey || apiKey !== process.env.NEXT_PUBLIC_API_KEY) {

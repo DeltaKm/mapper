@@ -1,11 +1,3 @@
-/*
- * Script di migrazione per popolare contact_key su Customer e CustomerOrdersFlat.
- *
- * Uso:
- *   node scripts/backfill-contact-keys.js
- *
- * Richiede che DATABASE_URL (connessione MongoDB) sia configurato, ad es. nel file .env.
- */
 
 require("dotenv").config();
 const { MongoClient } = require("mongodb");
@@ -173,10 +165,8 @@ async function backfillOrderContactKeys(db) {
           const { rawEmail, rawPhone, contactKey: computed } = extractCustomerContactData(matchingCustomer);
           contactKey = matchingCustomer.contact_key || computed;
 
-          // Aggiorna cache
           customerCache.set(cacheKey, contactKey);
 
-          // Facoltativamente normalizza subito il cliente se manca contact_key
           if (!matchingCustomer.contact_key && contactKey) {
             await customerCollection.updateOne(
               { _id: matchingCustomer._id },

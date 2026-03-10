@@ -469,7 +469,7 @@ async function processDataInBackground(
                   fidelity_card_number: customer.fidelity_card_number || existing.fidelity_card_number || "",
                   consent_marketing: customer.consent_marketing || existing.consent_marketing || "",
                   consent_third_parties_marketing: customer.consent_third_parties_marketing || existing.consent_third_parties_marketing || "",
-                  dateCreation: customer.dateCreationProduct || customer.dateCreation || existing.dateCreation || "",
+                  dateCreation: existing.dateCreation || "", // PRESERVA SEMPRE la data di creazione originale
                   dateLastUpdate: incomingLastUpdate, // Aggiorna con la nuova data se più recente
                   deleted: customer.deleted || existing.deleted || "",
                   restaurant_code,
