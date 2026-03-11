@@ -18,10 +18,10 @@ function getItalianDateString(): string {
 
 async function parseLargeJSON(request: NextRequest): Promise<any> {
   try {
-    // Usa il metodo nativo di Next.js che è più efficiente
+ 
     const body = await request.json();
     
-    // Stima approssimativa della dimensione per sicurezza
+
     const bodyString = JSON.stringify(body);
     const sizeInMB = Buffer.byteLength(bodyString, 'utf8') / (1024 * 1024);
     
@@ -52,7 +52,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Crea job asincrono
     const jobId = `job_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
     const asyncJob = await prisma.asyncJob.create({
@@ -66,12 +65,10 @@ export async function POST(request: NextRequest) {
       }
     });
 
-    // Avvia processamento in background (non aspettare)
     processDataInBackground(jobId, body, restaurant_code, subscriber_code).catch(error => {
       console.error(`[${getItalianDateString()}] Errore background job ${jobId}:`, error);
     });
 
-    // Risposta immediata
     return NextResponse.json({
       status: "accepted",
       message: "Dati ricevuti e messi in coda per processamento",
@@ -102,7 +99,6 @@ async function processDataInBackground(
   try {
     console.log(`[${getItalianDateString()}] Avvio processamento job ${jobId}`);
     
-    // Aggiorna stato a 'processing'
     await prisma.asyncJob.update({
       where: { id: jobId },
       data: {
@@ -131,33 +127,27 @@ async function processDataInBackground(
       ticketsErrors: 0
     };
 
-    // Log minimale per ridurre uso memoria
     const clientIP = 'async-job';
     console.log(`[${getItalianDateString()}] Job ${jobId} - Payload: customers=${body.customerList?.length || 0}, movements=${body.movimenti?.length || 0}, sales=${body.movimentivend?.length || 0}, tickets=${body.TicketList?.length || 0}`);
 
-    // Salva i dati dei movimenti nella collezione SignaMovimenti
     if (Array.isArray(body.movimenti) && body.movimenti.length > 0) {
       console.log(`[${getItalianDateString()}] Processando ${body.movimenti.length} movimenti Signa per SignaMovimenti...`);
       let salvati = 0, saltati = 0, errori = 0;
       
-      // Processamento sequenziale per ridurre uso memoria
       for (const movimento of body.movimenti) {
         try {
-          // Verifica se esiste già un documento con lo stesso IDReferencePOS
           const existingMovimento = await prisma.signaMovimenti.findFirst({
             where: {
               IDReferencePOS: movimento.IDReferencePOS?.toString() || ""
             }
           });
           
-          // Se esiste già, salta questo movimento
           if (existingMovimento) {
             console.log(`[${getItalianDateString()}] Movimento Signa con IDReferencePOS ${movimento.IDReferencePOS} già presente, skip.`);
             saltati++;
             continue;
           }
           
-          // Se non esiste, procedi con il salvataggio
           await prisma.signaMovimenti.create({
             data: {
               payload: movimento,
@@ -188,44 +178,38 @@ async function processDataInBackground(
       }
       console.log(`[${getItalianDateString()}] Job ${jobId}: Completato processamento movimenti Signa: ${salvati} salvati, ${saltati} saltati, ${errori} errori`);
       
-      // Aggiorna stats movimenti
       stats.movimentiProcessed = salvati + saltati;
       stats.movimentiCreated = salvati;
       stats.movimentiSkipped = saltati;
       stats.movimentiErrors = errori;
     }
     
-    // Salva i dati delle vendite nella collezione SignaMovimentiVend
     if (Array.isArray(body.movimentivend) && body.movimentivend.length > 0) {
       console.log(`[${getItalianDateString()}] Job ${jobId}: Processando ${body.movimentivend.length} movimenti vendita Signa...`);
       let salvati = 0, saltati = 0, errori = 0;
 
-      // Processamento sequenziale per ridurre uso memoria
       for (const movimento of body.movimentivend) {
             try {
               console.log(`[${getItalianDateString()}] Job ${jobId}: Processando movimento ${movimento.IDMovimentoPOS}`);
               
-              // Verifica se esiste già un documento con lo stesso IDMovimentoPOS
               const existingMovimentoVend = await prisma.signaMovimentiVend.findFirst({
                 where: {
                   IDMovimentoPOS: movimento.IDMovimentoPOS?.toString() || ""
                 }
               });
               
-              // Se esiste già, salta questo movimento
               if (existingMovimentoVend) {
                 console.log(`[${getItalianDateString()}] Job ${jobId}: Movimento ${movimento.IDMovimentoPOS} già presente, skip.`);
                 saltati++;
-                continue; // Salta solo l'iterazione corrente
+                continue;
               }
               
-              // Se non esiste, procedi con il salvataggio
               await prisma.$runCommandRaw({
                 insert: "SignaMovimentiVend",
                 documents: [
                   {
                     movimentoData: movimento,
-                    IDMovimentoPOS: movimento.IDMovimentoPOS?.toString() || "", // Salva IDMovimentoPOS come campo separato
+                    IDMovimentoPOS: movimento.IDMovimentoPOS?.toString() || "", 
                     restaurant_code,
                     subscriber_code: "SIGNA",
                     createdAt: new Date(),
@@ -247,7 +231,6 @@ async function processDataInBackground(
 
               const prodotti = movimento.prodotti || [];
 
-              // Utilizzo updateCustomerOrders per aggiornare i campi aggregati
               try {
                 const idCustomer = movimento.customer?.idCustomerExt || movimento.customer?.idCustomer;
                 if (!idCustomer) {
@@ -265,7 +248,7 @@ async function processDataInBackground(
       }
       console.log(`[${getItalianDateString()}] Job ${jobId}: Completato processamento movimenti vendita Signa: ${salvati} salvati, ${saltati} saltati, ${errori} errori`);
       
-      // Aggiorna stats movimenti vendita
+      
       stats.movimentivendProcessed = salvati + saltati;
       stats.movimentivendCreated = salvati;
       stats.movimentivendSkipped = saltati;
@@ -276,7 +259,6 @@ async function processDataInBackground(
       console.log(`[${getItalianDateString()}] Processando ${body.TicketList.length} ticket DylogApp...`);
       let salvati = 0, saltati = 0, errori = 0, erroriUpdate = 0;
 
-      // Processamento sequenziale per ridurre uso memoria
       for (const ticket of body.TicketList) {
             try {
               let orderWebInfo = null;
@@ -314,7 +296,6 @@ async function processDataInBackground(
                 }
               }
 
-              // Salva il ticket nella collezione ticketListBaccoDylogAPP
               try {
                 await prisma.ticketListBaccoDylogAPP.create({
                   data: {
@@ -329,12 +310,11 @@ async function processDataInBackground(
                 console.log(`[${getItalianDateString()}] Ticket DylogApp con IDTickets ${orderWebInfo.IDTickets} salvato con successo.`);
                 salvati++;
               } catch (error) {
-                // Gestione errori: potrebbe essere un duplicato o altro problema
+               
                 console.error(`[${getItalianDateString()}] Errore nel salvare il ticket DylogApp con IDTickets ${orderWebInfo.IDTickets}: ${error}`);
                 errori++;
               }
 
-              // Utilizzo updateCustomerOrders per aggiornare i campi aggregati
               try {
                 await updateCustomerOrders(ticket, "dylogapp", orderWebInfo.IDCustomer, restaurant_code);
               } catch (updateError) {
@@ -348,7 +328,7 @@ async function processDataInBackground(
       }
       console.log(`[${getItalianDateString()}] Job ${jobId}: Completato processamento ticket DylogApp: ${salvati} salvati, ${saltati} saltati, ${errori} errori, ${erroriUpdate} errori di aggiornamento`);
       
-      // Aggiorna stats ticket
+     
       stats.ticketsProcessed = salvati + saltati;
       stats.ticketsCreated = salvati;
       stats.ticketsSkipped = saltati;
@@ -359,20 +339,20 @@ async function processDataInBackground(
       console.log(`[${getItalianDateString()}] Processando ${body.customerList.length} clienti...`);
       let aggiornati = 0, creati = 0, saltati = 0, errori = 0;
 
-      // Processamento sequenziale per ridurre uso memoria
+    
       for (const customer of body.customerList) {
             try {
-              // Determina il tipo di utente basato su arrived_from
+            
               const arrivedFrom = customer.arrived_from?.toLowerCase() || "";
               
-              // Data in arrivo (specifica: dateLastUpdateProduct)
+             
               const incomingLastUpdate = customer.dateLastUpdateProduct || "";
               
               let existing = null;
               let effectiveCustomerId = "";
               
               if (arrivedFrom === "app") {
-                // LOGICA APP: usa idCustomerExt o idCustomer
+              
                 effectiveCustomerId = customer.idCustomerExt || customer.idCustomer;
                 
                 if (!effectiveCustomerId) {
@@ -380,7 +360,7 @@ async function processDataInBackground(
                   continue;
                 }
                 
-                // Cerca per idCustomer OPPURE per email NEL STESSO RESTAURANT
+             
                 existing = await prisma.customer.findFirst({
                   where: {
                     AND: [
@@ -395,9 +375,9 @@ async function processDataInBackground(
                   }
                 });
               } else {
-                // LOGICA NON-APP
+               
                 if (customer.idCustomerExt) {
-                  // Ha idCustomerExt → salvalo in idCustomer
+                
                   effectiveCustomerId = customer.idCustomerExt;
                   existing = await prisma.customer.findFirst({
                     where: {
@@ -413,7 +393,7 @@ async function processDataInBackground(
                     }
                   });
                 } else {
-                  // NON ha idCustomerExt → idCustomer = "" e cerca per email
+                 
                   effectiveCustomerId = "";
                   if (customer.email) {
                     existing = await prisma.customer.findFirst({
@@ -428,11 +408,11 @@ async function processDataInBackground(
                 }
               }
               
-              // Log per tracciare quale ID stiamo usando
+            
               console.log(`[${getItalianDateString()}] Processo cliente - arrived_from: ${arrivedFrom}, ID: ${effectiveCustomerId}${customer.idCustomerExt ? ' (da idCustomerExt)' : ''}${existing ? ' - TROVATO' : ' - NUOVO'}`);
 
               if (existing) {
-                // Controlla se dateLastUpdateProduct (in arrivo) è più recente di dateLastUpdate (salvato)
+               
                 const existingLastUpdate = existing.dateLastUpdate || "";
                 
                 if (incomingLastUpdate && existingLastUpdate && incomingLastUpdate <= existingLastUpdate) {
@@ -440,7 +420,7 @@ async function processDataInBackground(
                   saltati++;
                   continue;
                 }
-                // Aggiorna il cliente esistente preservando i valori esistenti se non vengono passati nuovi valori
+              
                 const filteredCustomerData = {
                   idReferenceGateway: customer.idReferenceGateway || existing.idReferenceGateway || "",
                   idCustomer: effectiveCustomerId,
@@ -469,15 +449,15 @@ async function processDataInBackground(
                   fidelity_card_number: customer.fidelity_card_number || existing.fidelity_card_number || "",
                   consent_marketing: customer.consent_marketing || existing.consent_marketing || "",
                   consent_third_parties_marketing: customer.consent_third_parties_marketing || existing.consent_third_parties_marketing || "",
-                  dateCreation: existing.dateCreation || "", // PRESERVA SEMPRE la data di creazione originale
-                  dateLastUpdate: incomingLastUpdate, // Aggiorna con la nuova data se più recente
+                  dateCreation: existing.dateCreation || "",
+                  dateLastUpdate: incomingLastUpdate, 
                   deleted: customer.deleted || existing.deleted || "",
                   restaurant_code,
                   subscriber_code,
-                  updateAt: new Date(), // Assicura che il timestamp di aggiornamento sia corretto
+                  updateAt: new Date(), 
                 };
                 
-                // Log dei dati filtrati usati per l'update
+               
                 console.log(`[${getItalianDateString()}] DATI FILTRATI PER UPDATE CUSTOMER ${customer.idCustomer}:`);
                 console.log(JSON.stringify(filteredCustomerData, null, 2));
                 
@@ -485,14 +465,13 @@ async function processDataInBackground(
                   where: { id: existing.id },
                   data: {
                     ...filteredCustomerData,
-                    idCustomer: effectiveCustomerId // Assicura che idCustomer sia impostato correttamente
+                    idCustomer: effectiveCustomerId 
                   },
                 });
                 console.log(`[${getItalianDateString()}] Cliente con idCustomer ${customer.idCustomer} aggiornato con successo.`);
                 aggiornati++;
               } else {
-                // Crea un nuovo cliente se non esiste
-                // Filtra i campi del cliente per includere solo quelli definiti nel modello Prisma
+             
                 const filteredCustomerData = {
                   idReferenceGateway: customer.idReferenceGateway || "",
                   idCustomer: effectiveCustomerId,
@@ -528,14 +507,14 @@ async function processDataInBackground(
                   subscriber_code,
                 };
                 
-                // Log dei dati filtrati usati per la creazione
+               
                 console.log(`[${getItalianDateString()}] DATI FILTRATI PER CREATE CUSTOMER ${customer.idCustomer}:`);
                 console.log(JSON.stringify(filteredCustomerData, null, 2));
                 
                 await prisma.customer.create({
                   data: {
                     ...filteredCustomerData,
-                    idCustomer: effectiveCustomerId, // Assicura che idCustomer sia impostato correttamente
+                    idCustomer: effectiveCustomerId,
                     createdAt: new Date()
                   },
                 });
@@ -543,14 +522,14 @@ async function processDataInBackground(
                 creati++;
               }
             } catch (error) {
-              // Log dell'errore ma non interrompe il processo per gli altri clienti
+            
               console.error(`[${getItalianDateString()}] Errore nell'aggiornamento/creazione del cliente ${customer?.idCustomer || 'sconosciuto'}: ${error}`);
               errori++;
             }
       }
       console.log(`[${getItalianDateString()}] Job ${jobId}: Completato processamento clienti: ${aggiornati} aggiornati, ${creati} creati, ${saltati} saltati (data non recente), ${errori} errori`);
       
-      // Aggiorna stats finali
+    
       stats.customersProcessed = aggiornati + creati + saltati;
       stats.customersCreated = creati;
       stats.customersUpdated = aggiornati;
@@ -558,7 +537,7 @@ async function processDataInBackground(
       stats.customersErrors = errori;
     }
 
-    // Job completato
+   
     const duration = ((Date.now() - start) / 1000).toFixed(2);
     
     await prisma.asyncJob.update({

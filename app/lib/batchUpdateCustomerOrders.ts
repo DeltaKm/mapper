@@ -8,17 +8,13 @@ interface MovementData {
   restaurant_code: string;
 }
 
-/**
- * Aggiorna CustomerOrders in batch per migliorare le performance
- * Raggruppa per cliente e fa una sola operazione DB per cliente
- */
+
 export async function batchUpdateCustomerOrders(
   movements: MovementData[]
 ): Promise<void> {
   try {
     console.log(`[BATCH] Inizio batch update per ${movements.length} movimenti...`);
     
-    // Raggruppa movimenti per cliente
     const customerGroups = new Map<string, MovementData[]>();
     
     for (const movement of movements) {
@@ -32,7 +28,6 @@ export async function batchUpdateCustomerOrders(
     
     console.log(`[BATCH] Processando ${customerGroups.size} clienti unici...`);
     
-    // Recupera tutti i CustomerOrders esistenti in una sola query
     const customerIds = Array.from(customerGroups.keys());
     const existingOrders = await prisma.customerOrders.findMany({
       where: {
@@ -40,7 +35,6 @@ export async function batchUpdateCustomerOrders(
       }
     });
     
-    // Crea mappa per accesso rapido
     const existingOrdersMap = new Map<string, any>();
     for (const order of existingOrders) {
       if (order.idCustomer) {
@@ -48,7 +42,6 @@ export async function batchUpdateCustomerOrders(
       }
     }
     
-    // Recupera tutti i dettagli prodotti necessari in una sola query
     const movimentoPOSIds = movements
       .filter(m => m.sourceType === "signa")
       .map(m => m.movimento.IDMovimentoPOS?.toString())
@@ -67,7 +60,6 @@ export async function batchUpdateCustomerOrders(
       }
     }
     
-    // Processa ogni gruppo di cliente
     const updatePromises: Promise<any>[] = [];
     const createData: any[] = [];
     
@@ -75,7 +67,6 @@ export async function batchUpdateCustomerOrders(
       const existingOrder = existingOrdersMap.get(customerId);
       const restaurant_code = customerMovements[0].restaurant_code;
       
-      // Calcola aggregati per tutti i movimenti del cliente
       let totalAmount = 0;
       let totalOrders = 0;
       let firstOrderDate: Date | null = null;
@@ -108,7 +99,6 @@ export async function batchUpdateCustomerOrders(
       }
       
       if (existingOrder) {
-        // Update esistente
         const updatedTotalSpent = Math.max(0, (existingOrder.totalSpent || 0) + totalAmount);
         const updatedOrderDates = Array.from(new Set([
           ...(existingOrder.orderDates || []),
@@ -132,7 +122,6 @@ export async function batchUpdateCustomerOrders(
           })
         );
       } else {
-        // Nuovo record
         const initialTotalSpent = Math.max(0, totalAmount);
         
         createData.push({
@@ -150,13 +139,11 @@ export async function batchUpdateCustomerOrders(
       }
     }
     
-    // Esegui tutti gli update in parallelo
     if (updatePromises.length > 0) {
       await Promise.all(updatePromises);
       console.log(`[BATCH] Aggiornati ${updatePromises.length} CustomerOrders esistenti`);
     }
     
-    // Esegui tutti i create in batch
     if (createData.length > 0) {
       await prisma.customerOrders.createMany({
         data: createData
@@ -172,9 +159,7 @@ export async function batchUpdateCustomerOrders(
   }
 }
 
-/**
- * Processa un singolo movimento e restituisce i dati dell'ordine
- */
+
 async function processMovement(
   movimento: any, 
   sourceType: "signa" | "dylogapp",
@@ -185,21 +170,17 @@ async function processMovement(
       const sourceId = movimento.IDReferencePOS?.toString() || "";
       const orderId = movimento.IDMovimentoPOS?.toString() || "";
       
-      // Formatta la data dell'ordine
       const dataPart = movimento.PagamentoData ? movimento.PagamentoData.split(' ')[0] : '';
       const orderDate = dataPart && movimento.PagamentoOra
         ? new Date(moment(`${dataPart} ${movimento.PagamentoOra}`, "DD/MM/YYYY HH:mm:ss").toISOString())
         : new Date();
       
-      // Verifica se è un reso
       const isReso = !Array.isArray(movimento.pagamenti) || movimento.pagamenti.length === 0;
       
-      // Calcola l'importo
       let amount = Array.isArray(movimento.pagamenti)
         ? movimento.pagamenti.reduce((sum: number, p: any) => sum + (p.Importo || 0), 0)
         : 0;
       
-      // Recupera dettagli prodotti dalla mappa
       let prodottiDettagli: any[] = [];
       const signaMovimento = signaMovimentiMap.get(orderId);
       
@@ -207,7 +188,6 @@ async function processMovement(
         const payload = signaMovimento.payload as any;
         prodottiDettagli = payload.dettagli || [];
         
-        // Se è un reso, calcola il valore
         if (isReso) {
           let resoValue = 0;
           for (const dettaglio of prodottiDettagli) {
@@ -297,9 +277,7 @@ async function processMovement(
   }
 }
 
-/**
- * Mappa i prodotti da Signa al formato standard
- */
+
 function mapSignaProducts(prodotti: any[] | undefined): any[] {
   if (!prodotti || !Array.isArray(prodotti)) {
     return [];

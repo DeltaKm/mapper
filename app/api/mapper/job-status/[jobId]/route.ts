@@ -38,7 +38,7 @@ export async function GET(
       );
     }
 
-    // Calcola durata
+
     let duration = null;
     if (job.startedAt) {
       const endTime = job.completedAt || new Date();
