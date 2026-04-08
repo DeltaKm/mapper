@@ -4,17 +4,36 @@ import prisma from "@/app/lib/prisma";
 import moment from "moment-timezone";
 import pLimit from "p-limit";
 
+// ─────────────────────────────────────────────────────────────
+// ENDPOINT PRINCIPALE DI INGESTION DATI
+//
+// Riceve payload da sistemi esterni (DylogApp, Signa) contenenti:
+//   - customerList    → anagrafiche clienti
+//   - movimenti       → vendite retail Signa (con dettaglio prodotti)
+//   - movimentivend   → movimenti cassa Signa (pagamenti)
+//   - TicketList      → scontrini/ordini ristorante DylogApp
+//   - BillList        → conti aperti DylogApp (non ancora pagati, ignorati)
+//
+// Risponde subito con 201 e processa tutto in background
+// per non tenere in attesa il chiamante.
+// ─────────────────────────────────────────────────────────────
+
+// Limite massimo dimensione payload accettato
 const MAX_MB = 32; // da ridurre da 32MB a 16MB
+// Numero massimo di operazioni DB in parallelo nel processamento background
 const CONCURRENCY = 5; 
 
 function getItalianDate(): Date {
   return moment().tz("Europe/Rome").toDate();
 }
 
+// Restituisce la data/ora corrente italiana formattata come stringa (per i log)
 function getItalianDateString(): string {
   return moment().tz("Europe/Rome").format("YYYY-MM-DD HH:mm:ss");
 }
 
+// Converte la data e ora Signa dal formato "DD/MM/YYYY HH:mm:ss" a oggetto Date
+// Signa invia la data e l'ora in campi separati (es. "25/03/2026 00:00:00" e "12:36:00")
 function parseSignaDate(data: string, ora: string): Date {
   try {
     const dataPart = data.split(' ')[0];
@@ -24,16 +43,30 @@ function parseSignaDate(data: string, ora: string): Date {
   }
 }
 
+// Normalizza l'email: trim + lowercase
+// Es: "  Mario.Rossi@Example.COM  " → "mario.rossi@example.com"
 function normalizeEmail(email?: string | null): string {
   if (!email) return "";
   return email.trim().toLowerCase();
 }
 
+// Normalizza il telefono: rimuove tutto ciò che non è cifra
+// Es: "+39 333-123 4567" → "393331234567"
 function normalizePhone(phone?: string | null): string {
   if (!phone) return "";
   return phone.replace(/\D+/g, "");
 }
 
+// Calcola la contact_key univoca del cliente.
+// È la chiave di collegamento tra anagrafiche, ordini retail e ticket ristorante.
+//
+// Priorità:
+//   1. Email (se presente) → "email:mario.rossi@example.com"
+//   2. Telefono (se email assente) → "phone:393331234567"
+//   3. Stringa vuota (se nessun contatto disponibile)
+//
+// Questa chiave viene usata in CustomerOrdersFlat per collegare
+// gli ordini al cliente anche in assenza di idCustomer.
 function computeContactKey(email?: string | null, phone?: string | null): {
   contactKey: string;
   normalizedEmail: string;
@@ -64,6 +97,9 @@ function computeContactKey(email?: string | null, phone?: string | null): {
   };
 }
 
+// Legge il body della request come JSON e verifica che non superi il limite di dimensione.
+// Next.js di default ha un limite di 4MB; per payload più grandi
+// il limite va alzato anche in next.config.ts (bodyParser).
 async function parseLargeJSON(request: NextRequest): Promise<any> {
   try {
   
@@ -85,6 +121,60 @@ async function parseLargeJSON(request: NextRequest): Promise<any> {
   }
 }
 
+// Notifica DylogApp quando viene eseguito un merge anagrafico:
+// ovvero quando due identità (una da app, una da POS) vengono ricollegate
+// sullo stesso record nel DB.
+// Chiama SETIDCUSTOMEREXT per comunicare al gateway che idCustomer
+// è ora associato a quel idReferenceGateway (ID interno POS).
+//
+// URL: https://restgate1.dylog.it:9191/CustomerService.svc/JSON/SUBSCRIBERS/DylogAPP/MERCHANT/{PublicCode}/SETIDCUSTOMEREXT
+// Payload: { idReferenceGateway: number, idCustomer: string }
+//
+// Fire-and-forget: errori loggati ma non bloccanti.
+function notifyDylogSetIdCustomerExt(
+  publicCode: string,
+  idReferenceGateway: string | number,
+  idCustomer: string
+): void {
+  if (!publicCode || !idReferenceGateway || !idCustomer) {
+    console.warn(`[${getItalianDateString()}] SETIDCUSTOMEREXT skippato - dati mancanti (publicCode=${publicCode}, idReferenceGateway=${idReferenceGateway}, idCustomer=${idCustomer})`);
+    return;
+  }
+
+  const url = `https://restgate1.dylog.it:9191/CustomerService.svc/JSON/SUBSCRIBERS/DylogAPP/MERCHANT/${publicCode}/SETIDCUSTOMEREXT`;
+  const payload = {
+    idReferenceGateway: typeof idReferenceGateway === "string" ? Number(idReferenceGateway) : idReferenceGateway,
+    idCustomer,
+  };
+
+  console.log(`[${getItalianDateString()}] SETIDCUSTOMEREXT → ${url} payload: ${JSON.stringify(payload)}`);
+
+  fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(10000),
+  })
+    .then((response) => {
+      if (!response.ok) {
+        console.error(`[${getItalianDateString()}] SETIDCUSTOMEREXT fallito: ${response.status} ${response.statusText}`);
+      } else {
+        console.log(`[${getItalianDateString()}] SETIDCUSTOMEREXT completato con successo per idCustomer=${idCustomer} publicCode=${publicCode}`);
+      }
+    })
+    .catch((error) => {
+      console.error(`[${getItalianDateString()}] SETIDCUSTOMEREXT errore (non bloccante):`, error instanceof Error ? error.message : error);
+    });
+}
+
+// Notifica opzionale verso un sistema esterno quando arriva un BillList/TicketList.
+// Configurabile tramite variabili d'ambiente:
+//   NOTIFY_BILL_ENABLED  → "true" per abilitare
+//   NOTIFY_BILL_URL      → URL del sistema esterno da notificare
+//   NOTIFY_BILL_API_KEY  → API key da passare nell'header x-api-key
+//
+// L'invio è fire-and-forget (non bloccante): eventuali errori vengono
+// solo loggati senza impattare la risposta al chiamante.
 function notifyExternalBill(data: any, restaurant_code: string, subscriber_code: string): void {
   const enabled = process.env.NOTIFY_BILL_ENABLED === 'true';
   const url = process.env.NOTIFY_BILL_URL;
@@ -127,6 +217,21 @@ function notifyExternalBill(data: any, restaurant_code: string, subscriber_code:
     });
 }
 
+// ─────────────────────────────────────────────────────────────
+// POST /api/mapper/storedata?restaurant_code=XXX&subscriber_code=YYY
+//
+// Flusso:
+//   1. Parsing e validazione dimensione payload
+//   2. Log della richiesta in ingresso
+//   3. Notifica esterna non bloccante (NOTIFY_BILL)
+//   4. Risposta immediata 201 al chiamante
+//   5. Avvio processamento dati in background (processDataInBackground)
+//
+// Risponde SEMPRE 201 anche in caso di errore di parsing,
+// per evitare che il sistema chiamante faccia retry aggressivi.
+// ─────────────────────────────────────────────────────────────
+
+
 export async function POST(request: NextRequest) {
   const start = Date.now();
   const limit = pLimit(CONCURRENCY);
@@ -137,14 +242,14 @@ export async function POST(request: NextRequest) {
     const restaurant_code = searchParams.get("restaurant_code") ?? "";
     const subscriber_code = searchParams.get("subscriber_code") ?? "";
 
-  
+
     const clientIP = request.headers.get('x-forwarded-for')?.split(',')[0] || 'unknown';
     console.log(`[${getItalianDateString()}] Request from ${clientIP} - Payload: customers=${body.customerList?.length || 0}, movements=${body.movimenti?.length || 0}, sales=${body.movimentivend?.length || 0}, tickets=${body.ticketList?.length || 0}`);
 
    
     notifyExternalBill(body, restaurant_code, subscriber_code);
 
-  
+
     const response = NextResponse.json({ 
       status: "success", 
       message: "Richiesta ricevuta e in processamento",
@@ -157,7 +262,6 @@ export async function POST(request: NextRequest) {
       }
     }, { status: 201 });
 
-  
     processDataInBackground(body, restaurant_code, subscriber_code, clientIP, start, limit);
 
     return response;
@@ -172,6 +276,19 @@ export async function POST(request: NextRequest) {
     }, { status: 201 });
   }
 }
+
+// ─────────────────────────────────────────────────────────────
+// PROCESSAMENTO BACKGROUND
+//
+// Viene lanciato in modo asincrono DOPO aver risposto al chiamante.
+// Gestisce 3 tipi di dati in sequenza:
+//   1. movimenti Signa  → SignaMovimenti + CustomerOrdersFlat (source: "retail")
+//   2. TicketList       → ticketListBaccoDylogAPP + CustomerOrdersFlat (source: "restaurant")
+//   3. customerList     → Customer (create o update)
+//
+// Il parametro `limit` (pLimit) controlla la concorrenza sulle operazioni DB
+// per evitare di saturare il pool di connessioni MongoDB.
+// ─────────────────────────────────────────────────────────────
 
 async function processDataInBackground(
   body: any, 
@@ -192,18 +309,46 @@ async function processDataInBackground(
       
       for (const movimento of body.movimenti) {
         try {
+          console.log(`[${getItalianDateString()}] [SIGNA] ── Processo movimento IDReferencePOS=${movimento.IDReferencePOS} restaurant_code=${restaurant_code}`);
+
+          // Controlla duplicati usando IDReferencePOS + restaurant_code come chiave univoca
+          // Se il movimento esiste già per questo negozio, lo salta per evitare duplicati
           const existingMovimento = await prisma.signaMovimenti.findFirst({
             where: {
-              IDReferencePOS: movimento.IDReferencePOS?.toString() || ""
+              IDReferencePOS: movimento.IDReferencePOS?.toString() || "",
+              restaurant_code: restaurant_code,
             }
           });
           
           if (existingMovimento) {
-            console.log(`[${getItalianDateString()}] Movimento Signa con IDReferencePOS ${movimento.IDReferencePOS} già presente, skip.`);
+            console.log(`[${getItalianDateString()}] [SIGNA] SKIP duplicato: IDReferencePOS=${movimento.IDReferencePOS} già presente (id=${existingMovimento.id}).`);
             saltati++;
             continue;
           }
           
+          // Cerca il Customer corrispondente tramite idCustomerProduct == customer.idCustomer
+          // (idCustomer in Signa è l'ID interno del POS, equivalente a idCustomerProduct nel gateway)
+          const signaIdCustomer = movimento.customer?.idCustomer?.toString().trim() || "";
+          console.log(`[${getItalianDateString()}] [SIGNA] customer.idCustomer="${signaIdCustomer}" idCustomerExt="${movimento.customer?.idCustomerExt ?? "null"}" email="${movimento.customer?.email ?? ""}" mobile="${movimento.customer?.mobile ?? ""}"`);
+          let referenceCustomerId = "";
+          if (signaIdCustomer) {
+            const matchedCustomer = await prisma.customer.findFirst({
+              where: {
+                idCustomerProduct: signaIdCustomer,
+                restaurant_code: restaurant_code,
+              },
+              select: { id: true },
+            });
+            if (matchedCustomer) {
+              referenceCustomerId = matchedCustomer.id;
+              console.log(`[${getItalianDateString()}] [SIGNA] Customer trovato: id=${referenceCustomerId} (idCustomerProduct=${signaIdCustomer}).`);
+            } else {
+              console.log(`[${getItalianDateString()}] [SIGNA] Nessun Customer trovato per idCustomerProduct="${signaIdCustomer}" restaurant_code="${restaurant_code}" → referenceCustomerId=""`);
+            }
+          } else {
+            console.log(`[${getItalianDateString()}] [SIGNA] idCustomer assente nel payload → lookup Customer saltato.`);
+          }
+
           await prisma.signaMovimenti.create({
             data: {
               payload: movimento,
@@ -222,12 +367,16 @@ async function processDataInBackground(
               Fatturato: movimento.Fatturato || false,
               restaurant_code,
               subscriber_code: "SIGNA",
+              reference_customer: referenceCustomerId,
               createdAt: new Date(),
               updateAt: new Date(),
             },
           });
           salvati++;
+          console.log(`[${getItalianDateString()}] [SIGNA] SignaMovimenti salvato: IDReferencePOS=${movimento.IDReferencePOS}.`);
 
+          // Estrae i dati cliente annidati nel movimento (campo "customer")
+          // per ricavare la contact_key e collegare i dettagli a CustomerOrdersFlat
           const movimentoCustomer = movimento.customer || {};
           const rawMovEmail = typeof movimentoCustomer.email === "string" ? movimentoCustomer.email.trim() : "";
           const movimentoPhoneCandidates = [
@@ -239,22 +388,33 @@ async function processDataInBackground(
           const rawMovPhone = movimentoPhoneCandidates.find((value) => typeof value === "string" && value.trim().length > 0) || "";
           const { contactKey: movimentoContactKey } = computeContactKey(rawMovEmail, rawMovPhone);
 
-          const movimentoCustomerId = movimentoCustomer.idCustomerExt || "";
+          // ID cliente per CustomerOrdersFlat:
+          // 1. idCustomerExt se presente (ID DylogApp)
+          // 2. altrimenti referenceCustomerId (id MongoDB trovato tramite idCustomerProduct)
+          const movimentoCustomerId = movimentoCustomer.idCustomerExt?.toString().trim() || referenceCustomerId;
 
+          console.log(`[${getItalianDateString()}] [SIGNA] CustomerOrdersFlat check: movimentoCustomerId="${movimentoCustomerId}" movimentoContactKey="${movimentoContactKey}" dettagli=${Array.isArray(movimento.dettagli) ? movimento.dettagli.length : "non-array"}`);
+
+          // Salva una riga in CustomerOrdersFlat per ogni dettaglio del movimento
+          // solo se abbiamo almeno un identificativo cliente (ID o contact_key)
+          // Questa tabella è la fonte dati per i filtri prodotti in mktselettivo
           if ((movimentoCustomerId || movimentoContactKey) && Array.isArray(movimento.dettagli)) {
             for (const dettaglio of movimento.dettagli) {
               try {
+                const detail_id = `${restaurant_code}_${movimento.IDReferencePOS}_${dettaglio.Riga}`;
                 const orderDate = parseSignaDate(movimento.MovimentoData || "", movimento.MovimentoOra || "");
                 const quantity = parseFloat(dettaglio.Quantita?.toString() || "0") || 0;
                 const unitPrice = parseFloat(dettaglio.Valore?.toString() || "0") || 0;
+                console.log(`[${getItalianDateString()}] [SIGNA] Upsert CustomerOrdersFlat detail_id="${detail_id}" quantity=${quantity} unitPrice=${unitPrice}`);
 
                 await prisma.customerOrdersFlat.upsert({
                   where: {
-                    detail_id: `${restaurant_code}_${movimento.IDReferencePOS}_${dettaglio.Riga}`
+                    detail_id,
                   },
                   update: {
                     idCustomer: movimentoCustomerId,
                     contact_key: movimentoContactKey,
+                    reference_customer: referenceCustomerId,
                     order_date: orderDate,
                     order_time: movimento.MovimentoOra || "",
                     order_year: movimento.MovimentoAnno || new Date().getFullYear(),
@@ -274,9 +434,10 @@ async function processDataInBackground(
                     updated_at: new Date()
                   },
                   create: {
-                    detail_id: `${restaurant_code}_${movimento.IDReferencePOS}_${dettaglio.Riga}`,
+                    detail_id,
                     idCustomer: movimentoCustomerId,
                     contact_key: movimentoContactKey,
+                    reference_customer: referenceCustomerId,
                     order_id: movimento.IDReferencePOS?.toString() || "",
                     public_code: restaurant_code,
                     source: "retail",
@@ -300,13 +461,16 @@ async function processDataInBackground(
                     updated_at: new Date()
                   }
                 });
+                console.log(`[${getItalianDateString()}] [SIGNA] CustomerOrdersFlat OK: detail_id="${detail_id}"`);
               } catch (flatError) {
-                console.error(`[${getItalianDateString()}] Errore salvando CustomerOrdersFlat per dettaglio ${dettaglio.Riga}: ${flatError}`);
+                console.error(`[${getItalianDateString()}] [SIGNA] ERRORE CustomerOrdersFlat detail_id="${restaurant_code}_${movimento.IDReferencePOS}_${dettaglio.Riga}": ${flatError}`);
               }
             }
+          } else {
+            console.log(`[${getItalianDateString()}] [SIGNA] CustomerOrdersFlat SALTATO per IDReferencePOS=${movimento.IDReferencePOS}: movimentoCustomerId="${movimentoCustomerId}" movimentoContactKey="${movimentoContactKey}" dettagliIsArray=${Array.isArray(movimento.dettagli)}`);
           }
         } catch (error) {
-          console.error(`[${getItalianDateString()}] Errore nel salvare movimento Signa con IDReferencePOS ${movimento.IDReferencePOS}: ${error}`);
+          console.error(`[${getItalianDateString()}] [SIGNA] ERRORE GENERALE movimento IDReferencePOS=${movimento.IDReferencePOS}: ${error}`);
           errori++;
         }
       }
@@ -319,6 +483,9 @@ async function processDataInBackground(
 
       for (const ticket of body.TicketList) {
             try {
+              // Cerca OrderWebInfo nella prima riga del DetailList che lo contiene.
+              // OrderWebInfo è presente solo per ordini arrivati dall'app/web (asporto/delivery).
+              // Per ordini al tavolo normali non esiste e il ticket viene saltato.
               let orderWebInfo = null;
               if (Array.isArray(ticket.DetailList)) {
                 for (const detail of ticket.DetailList) {
@@ -329,6 +496,8 @@ async function processDataInBackground(
                 }
               }
 
+              // Estrae l'email preferendo quella in OrderWebInfo (più affidabile, viene dall'app)
+              // rispetto a quella nel root del ticket (può essere vuota o meno aggiornata)
               const rawTicketEmailCandidates = [
                 typeof orderWebInfo?.Email === "string" ? orderWebInfo.Email.trim() : "",
                 typeof ticket.Email === "string" ? ticket.Email.trim() : "",
@@ -350,6 +519,22 @@ async function processDataInBackground(
 
               const orderCustomerId = orderWebInfo?.IDCustomer || "";
 
+              // Cerca il Customer nel DB per valorizzare reference_customer in CustomerOrdersFlat
+              // Match su idCustomer == orderCustomerId e restaurant_code
+              let ticketReferenceCustomerId = "";
+              if (orderCustomerId) {
+                const matchedTicketCustomer = await prisma.customer.findFirst({
+                  where: { idCustomer: orderCustomerId, restaurant_code },
+                  select: { id: true },
+                });
+                if (matchedTicketCustomer) {
+                  ticketReferenceCustomerId = matchedTicketCustomer.id;
+                }
+              }
+
+              // Se non c'è OrderWebInfo oppure mancano sia IDCustomer che contact_key,
+              // non possiamo collegare il ticket a nessun cliente → skip
+              // (es. ordini al tavolo senza tessera fidelity)
               if (!orderWebInfo || (!orderCustomerId && !ticketContactKey)) {
                 console.warn(`[${getItalianDateString()}] Ticket DylogApp senza identificativi cliente utili, skip.`);
                 saltati++;
@@ -474,210 +659,443 @@ async function processDataInBackground(
 
     if (Array.isArray(body.customerList) && body.customerList.length > 0) {
       console.log(`[${getItalianDateString()}] Processando ${body.customerList.length} clienti...`);
-      let aggiornati = 0, creati = 0, saltati = 0, errori = 0;
+      let aggiornati = 0, creati = 0, saltati = 0, aggiornatiParziale = 0, errori = 0;
 
-     
       for (const customer of body.customerList) {
-            try {
-       
-              const arrivedFrom = customer.arrived_from?.toLowerCase() || "";
-              
-              const incomingLastUpdate = customer.dateLastUpdateProduct || "";
+        try {
+          // arrived_from indica la sorgente del cliente:
+          //   "app"                      → cliente EasyAppear (ha sempre idCustomer/idCustomerExt)
+          //   "bacco"                    → cliente da POS fisico Bacco/DylogApp
+          //   "signa"                    → cliente da POS retail Signa
+          //   "customer_data_fidelityweb"→ tessera fidelity web
+          //   "customer_data_tickets"    → estratto dallo scontrino fiscale
+          //   "customer_data_retail"     → estratto dal movimento vendita retail
+          const arrivedFrom = customer.arrived_from?.toLowerCase() || "";
 
-              const rawEmail = typeof customer.email === "string" ? customer.email.trim() : "";
-              const phoneCandidates = [customer.mobile, customer.phone, customer.telephone, customer.cellphone];
-              const rawPhone = phoneCandidates.find((value) => typeof value === "string" && value.trim().length > 0) || "";
-              const { contactKey, normalizedEmail } = computeContactKey(rawEmail, rawPhone);
-              
-              let existing = null;
-              let effectiveCustomerId = "";
-              
-              if (arrivedFrom === "app") {
-               
-                effectiveCustomerId = customer.idCustomerExt || customer.idCustomer;
-                
-                if (!effectiveCustomerId) {
-                  console.warn(`[${getItalianDateString()}] Cliente App senza idCustomer/idCustomerExt, skip.`);
-                  continue;
-                }
+          // dateLastUpdateProduct è usato come guardia per evitare di sovrascrivere
+          // un record più recente con uno più vecchio (i sistemi POS come bacco/signa
+          // possono inviare lo stesso cliente più volte in ordine non garantito).
+          // Per i dati provenienti dall'app la guardia sulla data NON viene applicata:
+          // l'app è la fonte autoritativa e i suoi aggiornamenti passano sempre.
+          const incomingLastUpdate = customer.dateLastUpdateProduct || customer.dateLastUpdate || "";
 
-                const searchOr: any[] = [{ idCustomer: effectiveCustomerId }];
-                if (contactKey) {
-                  searchOr.push({ contact_key: contactKey });
-                }
-                const emailVariants = Array.from(new Set([customer.email, normalizedEmail].filter(Boolean)));
-                for (const emailVariant of emailVariants) {
-                  searchOr.push({ email: emailVariant });
-                }
+          const rawEmail = typeof customer.email === "string" ? customer.email.trim() : "";
+          // Prova i vari campi telefono in ordine di priorità
+          const phoneCandidates = [customer.mobile, customer.phone, customer.telephone, customer.cellphone];
+          const rawPhone = phoneCandidates.find((value) => typeof value === "string" && value.trim().length > 0) || "";
+          const { contactKey, normalizedEmail } = computeContactKey(rawEmail, rawPhone);
 
-                const whereClause: any = { restaurant_code };
-                if (searchOr.length > 0) {
-                  whereClause.OR = searchOr;
-                }
+          // idCustomerProduct è l'ID cliente interno al POS (es. Bacco/Signa),
+          // diverso da idCustomer che può essere l'ID gateway/app
+          const rawIdCustomerProduct = customer.idCustomerProduct?.toString() || "";
+          const incomingPublicCode = customer.publicCode?.toString() || "";
 
-                existing = await prisma.customer.findFirst({ where: whereClause });
-              } else {
-               
-                if (customer.idCustomerExt) {
-                 
-                  effectiveCustomerId = customer.idCustomerExt;
+          let existing = null;
+          let effectiveCustomerId = "";
 
-                  const searchOr: any[] = [{ idCustomer: effectiveCustomerId }];
-                  if (contactKey) {
-                    searchOr.push({ contact_key: contactKey });
-                  }
-                  const emailVariants = Array.from(new Set([customer.email, normalizedEmail].filter(Boolean)));
-                  for (const emailVariant of emailVariants) {
-                    searchOr.push({ email: emailVariant });
-                  }
+          if (arrivedFrom === "app") {
+            // ── CASO APP (EasyAppear) ──────────────────────────────────
+            // Strategia di lookup in ordine di priorità:
+            //   1. Cerca per idCustomer (ID univoco assegnato dall'app)
+            //   2. Se non trovato, cerca per publicCode + email insieme
+            //      (stesso negozio + stesso contatto → stesso cliente)
+            // Senza idCustomer il record non può essere gestito → skip.
+            effectiveCustomerId = customer.idCustomerExt || customer.idCustomer;
 
-                  const whereClause: any = { restaurant_code };
-                  if (searchOr.length > 0) {
-                    whereClause.OR = searchOr;
-                  }
+            if (!effectiveCustomerId) {
+              console.warn(`[${getItalianDateString()}] Cliente App senza idCustomer/idCustomerExt, skip.`);
+              continue;
+            }
 
-                  existing = await prisma.customer.findFirst({ where: whereClause });
-                } else {
-                 
-                  effectiveCustomerId = "";
+            // Step 1: cerca per idCustomer
+            existing = await prisma.customer.findFirst({
+              where: { restaurant_code, idCustomer: effectiveCustomerId },
+            });
 
-                  const searchOr: any[] = [];
-                  if (contactKey) {
-                    searchOr.push({ contact_key: contactKey });
-                  }
-                  const emailVariants = Array.from(new Set([customer.email, normalizedEmail].filter(Boolean)));
-                  for (const emailVariant of emailVariants) {
-                    searchOr.push({ email: emailVariant });
-                  }
+            // Step 2: fallback su publicCode + email (se email disponibile)
+            if (!existing && incomingPublicCode && rawEmail) {
+              console.log(`[${getItalianDateString()}] APP - idCustomer ${effectiveCustomerId} non trovato, fallback su publicCode+email`);
+              existing = await prisma.customer.findFirst({
+                where: { restaurant_code, publicCode: incomingPublicCode, email: rawEmail },
+              });
+            }
 
-                  if (searchOr.length > 0) {
-                    const whereClause: any = { restaurant_code, OR: searchOr };
-                    existing = await prisma.customer.findFirst({ where: whereClause });
-                  }
-                }
+          } else if (arrivedFrom === "bacco") {
+            // ── CASO BACCO ────────────────────────────────────────────
+            // Se è presente idCustomer:
+            //   → cerca per idCustomer; se non trovato lo crea
+            // Se idCustomer non è presente:
+            //   → cerca per (publicCode + email) oppure (publicCode + idCustomerProduct)
+            //      perché l'email potrebbe essere cambiata ma l'ID POS no;
+            //      se non trovato lo crea
+            effectiveCustomerId = customer.idCustomer?.toString() || "";
+
+            if (effectiveCustomerId) {
+              // Cerca direttamente per idCustomer
+              existing = await prisma.customer.findFirst({
+                where: { restaurant_code, idCustomer: effectiveCustomerId },
+              });
+              console.log(`[${getItalianDateString()}] BACCO - ricerca per idCustomer: ${effectiveCustomerId} → ${existing ? 'TROVATO' : 'NON TROVATO'}`);
+            } else {
+              // Nessun idCustomer → cerca per publicCode + email, poi per publicCode + idCustomerProduct
+              if (incomingPublicCode && rawEmail) {
+                existing = await prisma.customer.findFirst({
+                  where: { restaurant_code, publicCode: incomingPublicCode, email: rawEmail },
+                });
+                console.log(`[${getItalianDateString()}] BACCO - ricerca per publicCode+email → ${existing ? 'TROVATO' : 'NON TROVATO'}`);
               }
-              
-             
-              console.log(`[${getItalianDateString()}] Processo cliente - arrived_from: ${arrivedFrom}, ID: ${effectiveCustomerId}${customer.idCustomerExt ? ' (da idCustomerExt)' : ''}${existing ? ' - TROVATO' : ' - NUOVO'}`);
 
-              if (existing) {
-               
-                const existingLastUpdate = existing.dateLastUpdate || "";
-                
-                if (incomingLastUpdate && existingLastUpdate && incomingLastUpdate <= existingLastUpdate) {
-                  console.log(`[${getItalianDateString()}] Cliente ${effectiveCustomerId || 'email:' + customer.email} saltato - dateLastUpdateProduct non più recente (${incomingLastUpdate} <= ${existingLastUpdate})`);
-                  saltati++;
-                  continue;
-                }
-                const filteredCustomerData = {
-                  idReferenceGateway: customer.idReferenceGateway || existing.idReferenceGateway || "",
-                  idCustomer: effectiveCustomerId || existing.idCustomer || "",
-                  contact_key: contactKey || existing.contact_key || "",
-                  gender: customer.gender || existing.gender || "",
-                  name: customer.name || existing.name || "",
-                  surname: customer.surname || existing.surname || "",
-                  birth_data: customer.birth_data || existing.birth_data || "",
-                  vat_number: customer.vat_number || existing.vat_number || "",
-                  residence_address: customer.residence_address || existing.residence_address || "",
-                  residence_zipcode: customer.residence_zipcode || existing.residence_zipcode || "",
-                  residence_city: customer.residence_city || existing.residence_city || "",
-                  residence_province: customer.residence_province || existing.residence_province || "",
-                  residence_region: customer.residence_region || existing.residence_region || "",
-                  residence_state: customer.residence_state || existing.residence_state || "",
-                  domicile_address: customer.domicile_address || existing.domicile_address || "",
-                  domicile_zipcode: customer.domicile_zipcode || existing.domicile_zipcode || "",
-                  domicile_city: customer.domicile_city || existing.domicile_city || "",
-                  domicile_province: customer.domicile_province || existing.domicile_province || "",
-                  domicile_region: customer.domicile_region || existing.domicile_region || "",
-                  domicile_state: customer.domicile_state || existing.domicile_state || "",
-                  mobile: rawPhone || existing.mobile || "",
-                  email: rawEmail || existing.email || "",
-                  publicCode: customer.publicCode || existing.publicCode || "",
-                  subscriber: customer.subscriber || existing.subscriber || "",
-                  arrived_from: customer.arrived_from || existing.arrived_from || "",
-                  fidelity_card_number: customer.fidelity_card_number || existing.fidelity_card_number || "",
-                  consent_marketing: customer.consent_marketing || existing.consent_marketing || "",
-                  consent_third_parties_marketing: customer.consent_third_parties_marketing || existing.consent_third_parties_marketing || "",
-                  dateCreation: existing.dateCreation || "", 
-                  dateLastUpdate: incomingLastUpdate || existing.dateLastUpdate || "", 
-                  deleted: customer.deleted || existing.deleted || "",
-                  restaurant_code,
-                  subscriber_code,
-                  updateAt: new Date(), 
-                };
-                
-                
-                console.log(`[${getItalianDateString()}] DATI FILTRATI PER UPDATE CUSTOMER ${customer.idCustomer}:`);
-                console.log(JSON.stringify(filteredCustomerData, null, 2));
-                
+              if (!existing && incomingPublicCode && rawIdCustomerProduct) {
+                existing = await prisma.customer.findFirst({
+                  where: { restaurant_code, publicCode: incomingPublicCode, idCustomer: rawIdCustomerProduct },
+                });
+                console.log(`[${getItalianDateString()}] BACCO - ricerca per publicCode+idCustomerProduct (${rawIdCustomerProduct}) → ${existing ? 'TROVATO' : 'NON TROVATO'}`);
+              }
+
+              // Se trovato tramite idCustomerProduct usalo come effectiveCustomerId
+              if (existing && !effectiveCustomerId) {
+                effectiveCustomerId = existing.idCustomer || rawIdCustomerProduct;
+              }
+            }
+
+          } else {
+            // ── CASO ALTRI (SIGNA, FIDELITY, TICKETS, RETAIL...) ──────
+            // Mantiene la logica originale basata su idCustomerExt / contact_key
+            if (customer.idCustomerExt) {
+              effectiveCustomerId = customer.idCustomerExt;
+
+              const searchOr: any[] = [{ idCustomer: effectiveCustomerId }];
+              if (contactKey) {
+                searchOr.push({ contact_key: contactKey });
+              }
+              const emailVariants = Array.from(new Set([customer.email, normalizedEmail].filter(Boolean)));
+              for (const emailVariant of emailVariants) {
+                searchOr.push({ email: emailVariant });
+              }
+
+              const whereClause: any = { restaurant_code };
+              if (searchOr.length > 0) {
+                whereClause.OR = searchOr;
+              }
+
+              existing = await prisma.customer.findFirst({ where: whereClause });
+            } else {
+              // Nessun ID esterno → identificabile solo tramite contact_key
+              effectiveCustomerId = "";
+
+              const searchOr: any[] = [];
+              if (contactKey) {
+                searchOr.push({ contact_key: contactKey });
+              }
+              const emailVariants = Array.from(new Set([customer.email, normalizedEmail].filter(Boolean)));
+              for (const emailVariant of emailVariants) {
+                searchOr.push({ email: emailVariant });
+              }
+
+              if (searchOr.length > 0) {
+                const whereClause: any = { restaurant_code, OR: searchOr };
+                existing = await prisma.customer.findFirst({ where: whereClause });
+              }
+            }
+          }
+
+          // ── LOG RIEPILOGATIVO PRE-DECISIONE ────────────────────────
+          {
+            const idLabel       = effectiveCustomerId || rawIdCustomerProduct || "(nessuno)";
+            const emailLabel    = rawEmail            || "(nessuna)";
+            const phoneLabel    = rawPhone            || "(nessuno)";
+            const sourceLabel   = arrivedFrom         || "(sconosciuta)";
+
+            if (existing) {
+              // Il cliente è stato trovato nel DB
+              const existingIdLabel = existing.idCustomer?.trim()
+                ? `idCustomer=${existing.idCustomer}`
+                : `solo contact_key=${existing.contact_key || "(vuota)"}`;
+
+              const ownerLabel = existing.idCustomer?.trim()
+                ? "profilo APP (ha già idCustomer)"
+                : "profilo POS (senza idCustomer)";
+
+              console.log(
+                `[${getItalianDateString()}] 📥 CLIENTE ESISTENTE trovato` +
+                ` | sorgente="${sourceLabel}"` +
+                ` | id_in_arrivo=${idLabel}` +
+                ` | email=${emailLabel}` +
+                ` | telefono=${phoneLabel}` +
+                ` | db_record: ${existingIdLabel} (${ownerLabel})` +
+                ` | db_id=${existing.id}`
+              );
+
+              // Avviso anticipato su cosa succederà
+              if (existing.idCustomer?.trim() && arrivedFrom !== "app") {
+                console.log(
+                  `[${getItalianDateString()}] ⚠️  UPDATE BLOCCATO` +
+                  ` | motivo: il record ha già un idCustomer (${existing.idCustomer})` +
+                  ` e la sorgente "${sourceLabel}" non può sovrascriverlo`
+                );
+              } else if (arrivedFrom === "app" && !existing.idCustomer?.trim()) {
+                console.log(
+                  `[${getItalianDateString()}] 🔗 MERGE POTENZIALE` +
+                  ` | l'APP sta agganciando un profilo POS esistente` +
+                  ` | db_id=${existing.id}` +
+                  ` | idReferenceGateway=${existing.idReferenceGateway || "(vuoto)"}`
+                );
+              } else {
+                console.log(
+                  `[${getItalianDateString()}] ✏️  UPDATE CONSENTITO` +
+                  ` | sorgente="${sourceLabel}"` +
+                  ` | idCustomer=${idLabel}`
+                );
+              }
+            } else {
+              // Cliente non trovato → verrà creato
+              console.log(
+                `[${getItalianDateString()}] 🆕 NUOVO CLIENTE` +
+                ` | sorgente="${sourceLabel}"` +
+                ` | id=${idLabel}` +
+                ` | email=${emailLabel}` +
+                ` | telefono=${phoneLabel}` +
+                ` | publicCode=${incomingPublicCode || "(nessuno)"}`
+              );
+            }
+          }
+
+          if (existing) {
+            // ── UPDATE ──────────────────────────────────────────────
+            const existingLastUpdate = existing.dateLastUpdate || "";
+
+            // [GUARDIA 1] Data non più recente → skip (solo per sorgenti NON-app)
+            // L'app è fonte autoritativa: i suoi aggiornamenti bypassano sempre il controllo data.
+            // Eccezione: se arriva un idCustomerProduct che nel DB è assente, lo salviamo
+            // comunque anche se la data non è più recente (serve per collegare app ↔ gestionale).
+            if (arrivedFrom !== "app" && incomingLastUpdate && existingLastUpdate && incomingLastUpdate <= existingLastUpdate) {
+              if (rawIdCustomerProduct && !existing.idCustomerProduct?.trim()) {
                 await prisma.customer.update({
                   where: { id: existing.id },
-                  data: {
-                    ...filteredCustomerData,
-                    idCustomer: effectiveCustomerId || existing.idCustomer || "", 
-                    contact_key: contactKey || existing.contact_key || "",
-                  },
+                  data: { idCustomerProduct: rawIdCustomerProduct, updateAt: new Date() },
                 });
-                console.log(`[${getItalianDateString()}] Cliente con idCustomer ${customer.idCustomer} aggiornato con successo.`);
-                aggiornati++;
+                console.log(
+                  `[${getItalianDateString()}] � GUARDIA 1 - data non recente ma salvato idCustomerProduct="${rawIdCustomerProduct}"` +
+                  ` | idCustomer=${existing.idCustomer} ora collegato al gestionale POS` +
+                  ` | sorgente="${arrivedFrom}"`
+                );
+                aggiornatiParziale++;
               } else {
-
-                const filteredCustomerData = {
-                  idReferenceGateway: customer.idReferenceGateway || "",
-                  idCustomer: effectiveCustomerId,
-                  contact_key: contactKey,
-                  gender: customer.gender || "",
-                  name: customer.name || "",
-                  surname: customer.surname || "",
-                  birth_data: customer.birth_data || "",
-                  vat_number: customer.vat_number || "",
-                  residence_address: customer.residence_address || "",
-                  residence_zipcode: customer.residence_zipcode || "",
-                  residence_city: customer.residence_city || "",
-                  residence_province: customer.residence_province || "",
-                  residence_region: customer.residence_region || "",
-                  residence_state: customer.residence_state || "",
-                  domicile_address: customer.domicile_address || "",
-                  domicile_zipcode: customer.domicile_zipcode || "",
-                  domicile_city: customer.domicile_city || "",
-                  domicile_province: customer.domicile_province || "",
-                  domicile_region: customer.domicile_region || "",
-                  domicile_state: customer.domicile_state || "",
-                  mobile: rawPhone || "",
-                  email: rawEmail || "",
-                  publicCode: customer.publicCode || "",
-                  subscriber: customer.subscriber || "",
-                  arrived_from: customer.arrived_from || "",
-                  fidelity_card_number: customer.fidelity_card_number || "",
-                  consent_marketing: customer.consent_marketing || "",
-                  consent_third_parties_marketing: customer.consent_third_parties_marketing || "",
-                  dateCreation: customer.dateCreationProduct || customer.dateCreation || "",
-                  dateLastUpdate: customer.dateLastUpdateProduct || customer.dateLastUpdate || "",
-                  deleted: customer.deleted || "",
-                  restaurant_code,
-                  subscriber_code,
-                };
-                
-                console.log(`[${getItalianDateString()}] DATI FILTRATI PER CREATE CUSTOMER ${customer.idCustomer}:`);
-                console.log(JSON.stringify(filteredCustomerData, null, 2));
-                
-                await prisma.customer.create({
-                  data: {
-                    ...filteredCustomerData,
-                    idCustomer: effectiveCustomerId, 
-                    contact_key: contactKey,
-                    createdAt: new Date()
-                  },
-                });
-                console.log(`[${getItalianDateString()}] Nuovo cliente con idCustomer ${customer.idCustomer} creato con successo.`);
-                creati++;
+                console.log(
+                  `[${getItalianDateString()}] �🚫 GUARDIA 1 - skip per data` +
+                  ` | sorgente="${arrivedFrom}"` +
+                  ` | idCustomer=${effectiveCustomerId || customer.email}` +
+                  ` | incomingLastUpdate="${incomingLastUpdate}"` +
+                  ` | existingLastUpdate="${existingLastUpdate}"` +
+                  ` | motivo: dato in arrivo non più recente`
+                );
+                saltati++;
               }
-            } catch (error) {
-              console.error(`[${getItalianDateString()}] Errore nell'aggiornamento/creazione del cliente ${customer?.idCustomer || 'sconosciuto'}: ${error}`);
-              errori++;
+              continue;
             }
+
+            // [GUARDIA 2] Record ha già idCustomer e la sorgente non è app → skip
+            // Eccezione: se arriva un idCustomerProduct che nel DB è assente,
+            // lo salviamo comunque con un update mirato prima di skippare.
+            // Questo campo serve a collegare il profilo app con il gestionale POS.
+            if (existing.idCustomer && existing.idCustomer.trim() !== "" && arrivedFrom !== "app") {
+              if (rawIdCustomerProduct && !existing.idCustomerProduct?.trim()) {
+                // Salva solo idCustomerProduct (collega profilo app ↔ gestionale POS)
+                await prisma.customer.update({
+                  where: { id: existing.id },
+                  data: { idCustomerProduct: rawIdCustomerProduct, updateAt: new Date() },
+                });
+                console.log(
+                  `[${getItalianDateString()}] 💾 GUARDIA 2 - salvato idCustomerProduct="${rawIdCustomerProduct}"` +
+                  ` | idCustomer=${existing.idCustomer} ora collegato al gestionale POS` +
+                  ` | sorgente="${arrivedFrom}"`
+                );
+                aggiornatiParziale++;
+              } else {
+                console.log(
+                  `[${getItalianDateString()}] 🚫 GUARDIA 2 - skip per protezione profilo APP` +
+                  ` | sorgente="${arrivedFrom}"` +
+                  ` | existing.idCustomer="${existing.idCustomer}"` +
+                  ` | motivo: solo 'app' può modificare un profilo con idCustomer`
+                );
+                saltati++;
+              }
+              continue;
+            }
+
+            console.log(
+              `[${getItalianDateString()}] ✅ TUTTE LE GUARDIE PASSATE - procedo con UPDATE` +
+              ` | sorgente="${arrivedFrom}"` +
+              ` | idCustomer=${effectiveCustomerId || "(nessuno)"}` +
+              ` | incomingLastUpdate="${incomingLastUpdate || "(vuota)"}"` +
+              ` | existingLastUpdate="${existingLastUpdate || "(vuota)"}"` +
+              ` | db_id=${existing.id}`
+            );
+
+            // Per i dati provenienti dall'app usiamo i valori in arrivo come
+            // priorità assoluta (sovrascrittura diretta): l'app è la fonte
+            // più affidabile e aggiornata dell'anagrafica.
+            // Per le altre sorgenti manteniamo il fallback sul valore esistente
+            // in modo da non cancellare dati già presenti con campi vuoti.
+            const pick = (incoming: any, fallback: any) =>
+              arrivedFrom === "app"
+                ? (incoming ?? fallback ?? "")   // app: prende sempre il valore in arrivo, anche se stringa vuota
+                : (incoming || fallback || "");  // altri: fallback se il valore in arrivo è falsy
+
+            const filteredCustomerData = {
+              idReferenceGateway: pick(customer.idReferenceGateway, existing.idReferenceGateway),
+              idCustomer: effectiveCustomerId || existing.idCustomer || "",
+              // idCustomerProduct: viene aggiornato solo se arriva un valore nuovo
+              // e il record in DB non ne aveva uno (o era vuoto).
+              // Non si sovrascrive mai un idCustomerProduct già presente.
+              idCustomerProduct: rawIdCustomerProduct && !existing.idCustomerProduct?.trim()
+                ? rawIdCustomerProduct
+                : (existing.idCustomerProduct || rawIdCustomerProduct || ""),
+              contact_key: contactKey || existing.contact_key || "",
+              gender:                         pick(customer.gender,                         existing.gender),
+              name:                           pick(customer.name,                           existing.name),
+              surname:                        pick(customer.surname,                        existing.surname),
+              birth_data:                     pick(customer.birth_data,                     existing.birth_data),
+              vat_number:                     pick(customer.vat_number,                     existing.vat_number),
+              residence_address:              pick(customer.residence_address,              existing.residence_address),
+              residence_zipcode:              pick(customer.residence_zipcode,              existing.residence_zipcode),
+              residence_city:                 pick(customer.residence_city,                 existing.residence_city),
+              residence_province:             pick(customer.residence_province,             existing.residence_province),
+              residence_region:               pick(customer.residence_region,               existing.residence_region),
+              residence_state:                pick(customer.residence_state,                existing.residence_state),
+              domicile_address:               pick(customer.domicile_address,               existing.domicile_address),
+              domicile_zipcode:               pick(customer.domicile_zipcode,               existing.domicile_zipcode),
+              domicile_city:                  pick(customer.domicile_city,                  existing.domicile_city),
+              domicile_province:              pick(customer.domicile_province,              existing.domicile_province),
+              domicile_region:                pick(customer.domicile_region,                existing.domicile_region),
+              domicile_state:                 pick(customer.domicile_state,                 existing.domicile_state),
+              mobile:                         pick(rawPhone,                                existing.mobile),
+              email:                          pick(rawEmail,                                existing.email),
+              publicCode:                     pick(customer.publicCode,                     existing.publicCode),
+              subscriber:                     pick(customer.subscriber,                     existing.subscriber),
+              arrived_from:                   pick(customer.arrived_from,                   existing.arrived_from),
+              fidelity_card_number:           pick(customer.fidelity_card_number,           existing.fidelity_card_number),
+              consent_marketing:              pick(customer.consent_marketing,              existing.consent_marketing),
+              consent_third_parties_marketing:pick(customer.consent_third_parties_marketing,existing.consent_third_parties_marketing),
+              dateCreation:  existing.dateCreation || "",
+              dateLastUpdate: incomingLastUpdate || existing.dateLastUpdate || "",
+              deleted:                        pick(customer.deleted,                        existing.deleted),
+              restaurant_code,
+              subscriber_code,
+              updateAt: new Date(),
+            };
+
+            console.log(`[${getItalianDateString()}] DATI FILTRATI PER UPDATE CUSTOMER ${effectiveCustomerId || customer.idCustomer}:`);
+            console.log(JSON.stringify(filteredCustomerData, null, 2));
+
+            await prisma.customer.update({
+              where: { id: existing.id },
+              data: {
+                ...filteredCustomerData,
+                idCustomer: effectiveCustomerId || existing.idCustomer || "",
+                contact_key: contactKey || existing.contact_key || "",
+              },
+            });
+            console.log(`[${getItalianDateString()}] Cliente con idCustomer ${effectiveCustomerId || customer.idCustomer} aggiornato con successo.`);
+
+            // ── MERGE DETECTION ─────────────────────────────────────
+            // Rilevamento merge anagrafico: si verifica in due scenari:
+            //
+            //   A) arrived_from === "app" e il record in DB non aveva idCustomer
+            //      → l'app sta "rivendicando" un profilo precedentemente creato
+            //        da bacco/signa/fidelity tramite match su email/publicCode.
+            //        Notifica DylogApp con idReferenceGateway del record esistente.
+            //
+            //   B) arrived_from !== "app" (es. bacco) e il record in DB aveva già
+            //      un idCustomer (app) → il POS ha trovato lo stesso utente tramite
+            //      publicCode+email o publicCode+idCustomerProduct.
+            //      Notifica DylogApp con il nuovo idReferenceGateway arrivato.
+            //
+            // In entrambi i casi inviamo SETIDCUSTOMEREXT al gateway Dylog
+            // per allineare l'associazione idReferenceGateway ↔ idCustomer.
+            const mergedIdCustomer = effectiveCustomerId || existing.idCustomer || "";
+            const mergedPublicCode = customer.publicCode || existing.publicCode || "";
+            const mergedIdReferenceGateway = customer.idReferenceGateway || existing.idReferenceGateway || "";
+
+            const isMergeScenarioA =
+              arrivedFrom === "app" &&
+              (!existing.idCustomer || existing.idCustomer.trim() === "") &&
+              mergedIdCustomer &&
+              mergedIdReferenceGateway;
+
+            const isMergeScenarioB =
+              arrivedFrom !== "app" &&
+              existing.idCustomer && existing.idCustomer.trim() !== "" &&
+              mergedIdReferenceGateway &&
+              mergedIdCustomer;
+
+            if (isMergeScenarioA || isMergeScenarioB) {
+              const scenario = isMergeScenarioA ? "A (app arriva su profilo POS)" : "B (POS arriva su profilo app)";
+              console.log(`[${getItalianDateString()}] MERGE ANAGRAFICO scenario ${scenario} - idCustomer=${mergedIdCustomer}, idReferenceGateway=${mergedIdReferenceGateway}, publicCode=${mergedPublicCode}`);
+              notifyDylogSetIdCustomerExt(mergedPublicCode, mergedIdReferenceGateway, mergedIdCustomer);
+            }
+
+            aggiornati++;
+          } else {
+            // ── CREATE ──────────────────────────────────────────────
+            // Cliente non trovato nel DB → creazione nuovo record.
+            const filteredCustomerData = {
+              idReferenceGateway: customer.idReferenceGateway || "",
+              idCustomer: effectiveCustomerId || rawIdCustomerProduct,
+              idCustomerProduct: rawIdCustomerProduct || "",
+              contact_key: contactKey,
+              gender: customer.gender || "",
+              name: customer.name || "",
+              surname: customer.surname || "",
+              birth_data: customer.birth_data || "",
+              vat_number: customer.vat_number || "",
+              residence_address: customer.residence_address || "",
+              residence_zipcode: customer.residence_zipcode || "",
+              residence_city: customer.residence_city || "",
+              residence_province: customer.residence_province || "",
+              residence_region: customer.residence_region || "",
+              residence_state: customer.residence_state || "",
+              domicile_address: customer.domicile_address || "",
+              domicile_zipcode: customer.domicile_zipcode || "",
+              domicile_city: customer.domicile_city || "",
+              domicile_province: customer.domicile_province || "",
+              domicile_region: customer.domicile_region || "",
+              domicile_state: customer.domicile_state || "",
+              mobile: rawPhone || "",
+              email: rawEmail || "",
+              publicCode: customer.publicCode || "",
+              subscriber: customer.subscriber || "",
+              arrived_from: customer.arrived_from || "",
+              fidelity_card_number: customer.fidelity_card_number || "",
+              consent_marketing: customer.consent_marketing || "",
+              consent_third_parties_marketing: customer.consent_third_parties_marketing || "",
+              dateCreation: customer.dateCreationProduct || customer.dateCreation || "",
+              dateLastUpdate: customer.dateLastUpdateProduct || customer.dateLastUpdate || "",
+              deleted: customer.deleted || "",
+              restaurant_code,
+              subscriber_code,
+            };
+
+            console.log(`[${getItalianDateString()}] DATI FILTRATI PER CREATE CUSTOMER ${effectiveCustomerId || customer.idCustomer}:`);
+            console.log(JSON.stringify(filteredCustomerData, null, 2));
+
+            await prisma.customer.create({
+              data: {
+                ...filteredCustomerData,
+                idCustomer: effectiveCustomerId || rawIdCustomerProduct,
+                contact_key: contactKey,
+                createdAt: new Date(),
+              },
+            });
+            console.log(`[${getItalianDateString()}] Nuovo cliente con idCustomer ${effectiveCustomerId || customer.idCustomer} creato con successo.`);
+            creati++;
+          }
+        } catch (error) {
+          console.error(`[${getItalianDateString()}] Errore nell'aggiornamento/creazione del cliente ${customer?.idCustomer || 'sconosciuto'}: ${error}`);
+          errori++;
+        }
       }
-      console.log(`[${getItalianDateString()}] Completato processamento clienti: ${aggiornati} aggiornati, ${creati} creati, ${saltati} saltati (data non recente), ${errori} errori`);
+      console.log(`[${getItalianDateString()}] Completato processamento clienti: ${aggiornati} aggiornati, ${aggiornatiParziale} aggiornati parzialmente (solo idCustomerProduct), ${creati} creati, ${saltati} saltati, ${errori} errori`);
     }
 
     const duration = ((Date.now() - start) / 1000).toFixed(2);

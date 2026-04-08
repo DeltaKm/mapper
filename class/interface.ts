@@ -37,6 +37,9 @@ export interface dataList {
 // questa sembra la nuova registrazione anagrafica proveniente dal gateway
 export interface customerList{
     idReferenceGateway: String
+    idCustomer: string
+    idCustomerExt: string
+    idCustomerProduct: string
     gender: string
     name: string
     surname: string
@@ -55,15 +58,20 @@ export interface customerList{
     domicile_state: string
     phone: string
     mobile: string
+    telephone: string
+    cellphone: string
     email: string
     publicCode: string
     subscriber: string
     arrived_from: string
-    fidelity_card_numer: string
+    arrived_from_lastUpdate: string
+    fidelity_card_number: string
     consent_marketing: string
     consent_third_parties_marketing: string
     dateCreation: string
     dateLastUpdate: string
+    dateCreationProduct: string
+    dateLastUpdateProduct: string
     deleted: string
 }
 
@@ -97,21 +105,45 @@ export interface eosID {
 export interface customerListType {
     id: string
     idReferenceGateway: string
-    idCustoomer: string
+    idCustomer: string
     idCustomerExt: string
+    idCustomerProduct: string
     gender: string
+    name: string
     surname: string
-    brith_data: string
+    birth_data: string
     fiscal_code: string
     business: string
+    vat_number: string
     residence_address: string
     residence_zipcode: string
     residence_city: string
+    residence_province: string
+    residence_region: string
     residence_state: string
+    domicile_address: string
+    domicile_zipcode: string
+    domicile_city: string
+    domicile_province: string
+    domicile_region: string
+    domicile_state: string
     phone: string
+    mobile: string
+    telephone: string
+    cellphone: string
     email: string
     publicCode: string
+    subscriber: string
     arrived_from: string
+    arrived_from_lastUpdate: string
+    fidelity_card_number: string
+    consent_marketing: string
+    consent_third_parties_marketing: string
+    dateCreation: string
+    dateLastUpdate: string
+    dateCreationProduct: string
+    dateLastUpdateProduct: string
+    deleted: string
 }
 
 export class eosID {

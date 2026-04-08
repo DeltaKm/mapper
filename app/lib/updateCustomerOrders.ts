@@ -15,6 +15,7 @@ export async function updateCustomerOrders(
   restaurant_code: string
 ): Promise<void> {
   try {
+    
     if (!idCustomer) {
       console.log("updateCustomerOrders: idCustomer non specificato");
       return;
