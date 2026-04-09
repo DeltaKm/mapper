@@ -328,26 +328,33 @@ async function processDataInBackground(
           
           // Cerca il Customer corrispondente tramite idCustomerProduct == customer.idCustomer
           // (idCustomer in Signa è l'ID interno del POS, equivalente a idCustomerProduct nel gateway)
+          // REGOLA: se idCustomer è assente o il Customer non esiste nel DB → skip completo
+          // Non salviamo mai un movimento senza reference_customer risolto.
           const signaIdCustomer = movimento.customer?.idCustomer?.toString().trim() || "";
           console.log(`[${getItalianDateString()}] [SIGNA] customer.idCustomer="${signaIdCustomer}" idCustomerExt="${movimento.customer?.idCustomerExt ?? "null"}" email="${movimento.customer?.email ?? ""}" mobile="${movimento.customer?.mobile ?? ""}"`);
-          let referenceCustomerId = "";
-          if (signaIdCustomer) {
-            const matchedCustomer = await prisma.customer.findFirst({
-              where: {
-                idCustomerProduct: signaIdCustomer,
-                restaurant_code: restaurant_code,
-              },
-              select: { id: true },
-            });
-            if (matchedCustomer) {
-              referenceCustomerId = matchedCustomer.id;
-              console.log(`[${getItalianDateString()}] [SIGNA] Customer trovato: id=${referenceCustomerId} (idCustomerProduct=${signaIdCustomer}).`);
-            } else {
-              console.log(`[${getItalianDateString()}] [SIGNA] Nessun Customer trovato per idCustomerProduct="${signaIdCustomer}" restaurant_code="${restaurant_code}" → referenceCustomerId=""`);
-            }
-          } else {
-            console.log(`[${getItalianDateString()}] [SIGNA] idCustomer assente nel payload → lookup Customer saltato.`);
+
+          if (!signaIdCustomer) {
+            console.log(`[${getItalianDateString()}] [SIGNA] SKIP IDReferencePOS=${movimento.IDReferencePOS}: idCustomer assente nel payload → movimento ignorato.`);
+            saltati++;
+            continue;
           }
+
+          const matchedCustomer = await prisma.customer.findFirst({
+            where: {
+              idCustomerProduct: signaIdCustomer,
+              restaurant_code: restaurant_code,
+            },
+            select: { id: true },
+          });
+
+          if (!matchedCustomer) {
+            console.log(`[${getItalianDateString()}] [SIGNA] SKIP IDReferencePOS=${movimento.IDReferencePOS}: nessun Customer trovato per idCustomerProduct="${signaIdCustomer}" restaurant_code="${restaurant_code}" → movimento ignorato.`);
+            saltati++;
+            continue;
+          }
+
+          const referenceCustomerId = matchedCustomer.id;
+          console.log(`[${getItalianDateString()}] [SIGNA] Customer trovato: id=${referenceCustomerId} (idCustomerProduct=${signaIdCustomer}).`);
 
           await prisma.signaMovimenti.create({
             data: {
