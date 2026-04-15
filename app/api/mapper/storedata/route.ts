@@ -319,7 +319,7 @@ export async function POST(request: NextRequest) {
       }
     }, { status: 201 });
 
-    processDataInBackground(body, restaurant_code, subscriber_code, clientIP, start, limit);
+    processDataInBackground(body, restaurant_code, subscriber_code, clientIP, start, limit, cleanBody);
 
     return response;
   } catch (error) {
@@ -353,7 +353,8 @@ async function processDataInBackground(
   subscriber_code: string, 
   clientIP: string, 
   start: number,
-  limit: any
+  limit: any,
+  incomingPayload?: any
 ) {
   try {
     console.log(`[${getItalianDateString()}] Inizio processamento background...`);
@@ -785,7 +786,7 @@ async function processDataInBackground(
             if (existing) {
               const logMsg = `📥 CLIENTE ESISTENTE | cercato idCustomer="${effectiveCustomerId}" → trovato db.idCustomer="${existing.idCustomer}" db.email="${existing.email || ""}" db.mobile="${existing.mobile || ""}" db.publicCode="${existing.publicCode || ""}"`;
               console.log(`[${getItalianDateString()}] ${logMsg}`);
-              sendLog(restaurant_code, "info", logMsg, { cercato: { idCustomer: effectiveCustomerId }, trovato: { idCustomer: existing.idCustomer, email: existing.email, mobile: existing.mobile, publicCode: existing.publicCode }, sorgente: arrivedFrom });
+              sendLog(restaurant_code, "info", logMsg, { cercato: { idCustomer: effectiveCustomerId }, trovato: { idCustomer: existing.idCustomer, email: existing.email, mobile: existing.mobile, publicCode: existing.publicCode }, sorgente: arrivedFrom }, incomingPayload);
             } else {
               // Step 2: fallback su (publicCode + email) OPPURE (publicCode + phone)
               if (incomingPublicCode && (rawEmail || rawPhone)) {
@@ -803,7 +804,7 @@ async function processDataInBackground(
                     : `cercato phone="${rawPhone}" + publicCode="${incomingPublicCode}"`;
                   const logMsg2 = `📥 CLIENTE ESISTENTE | ${matchReason} → trovato db.idCustomer="${existing.idCustomer || ""}" db.email="${existing.email || ""}" db.mobile="${existing.mobile || ""}" db.publicCode="${existing.publicCode || ""}"`;
                   console.log(`[${getItalianDateString()}] ${logMsg2}`);
-                  sendLog(restaurant_code, "info", logMsg2, { cercato: { email: rawEmail, phone: rawPhone, publicCode: incomingPublicCode }, trovato: { idCustomer: existing.idCustomer, email: existing.email, mobile: existing.mobile, publicCode: existing.publicCode }, sorgente: arrivedFrom });
+                  sendLog(restaurant_code, "info", logMsg2, { cercato: { email: rawEmail, phone: rawPhone, publicCode: incomingPublicCode }, trovato: { idCustomer: existing.idCustomer, email: existing.email, mobile: existing.mobile, publicCode: existing.publicCode }, sorgente: arrivedFrom }, incomingPayload);
                 }
               }
             }
@@ -820,7 +821,7 @@ async function processDataInBackground(
               if (existing) {
                 const logMsgB1 = `📥 CLIENTE ESISTENTE | cercato idCustomer="${effectiveCustomerId}" → trovato db.idCustomer="${existing.idCustomer || ""}" db.email="${existing.email || ""}" db.mobile="${existing.mobile || ""}" db.publicCode="${existing.publicCode || ""}"`;
                 console.log(`[${getItalianDateString()}] ${logMsgB1}`);
-                sendLog(restaurant_code, "info", logMsgB1, { cercato: { idCustomer: effectiveCustomerId }, trovato: { idCustomer: existing.idCustomer, email: existing.email, mobile: existing.mobile, publicCode: existing.publicCode }, sorgente: "bacco" });
+                sendLog(restaurant_code, "info", logMsgB1, { cercato: { idCustomer: effectiveCustomerId }, trovato: { idCustomer: existing.idCustomer, email: existing.email, mobile: existing.mobile, publicCode: existing.publicCode }, sorgente: "bacco" }, incomingPayload);
               }
             } else {
               if (incomingPublicCode && rawEmail) {
@@ -831,7 +832,7 @@ async function processDataInBackground(
                 if (existing) {
                   const logMsgB2 = `📥 CLIENTE ESISTENTE | cercato email="${rawEmail}" + publicCode="${incomingPublicCode}" → trovato db.idCustomer="${existing.idCustomer || ""}" db.email="${existing.email || ""}" db.publicCode="${existing.publicCode || ""}"`;
                   console.log(`[${getItalianDateString()}] ${logMsgB2}`);
-                  sendLog(restaurant_code, "info", logMsgB2, { cercato: { email: rawEmail, publicCode: incomingPublicCode }, trovato: { idCustomer: existing.idCustomer, email: existing.email, publicCode: existing.publicCode }, sorgente: "bacco" });
+                  sendLog(restaurant_code, "info", logMsgB2, { cercato: { email: rawEmail, publicCode: incomingPublicCode }, trovato: { idCustomer: existing.idCustomer, email: existing.email, publicCode: existing.publicCode }, sorgente: "bacco" }, incomingPayload);
                 }
               }
 
@@ -843,7 +844,7 @@ async function processDataInBackground(
                 if (existing) {
                   const logMsgB3 = `📥 CLIENTE ESISTENTE | cercato idCustomerProduct="${rawIdCustomerProduct}" + publicCode="${incomingPublicCode}" → trovato db.idCustomer="${existing.idCustomer || ""}" db.email="${existing.email || ""}" db.publicCode="${existing.publicCode || ""}"`;
                   console.log(`[${getItalianDateString()}] ${logMsgB3}`);
-                  sendLog(restaurant_code, "info", logMsgB3, { cercato: { idCustomerProduct: rawIdCustomerProduct, publicCode: incomingPublicCode }, trovato: { idCustomer: existing.idCustomer, email: existing.email, publicCode: existing.publicCode }, sorgente: "bacco" });
+                  sendLog(restaurant_code, "info", logMsgB3, { cercato: { idCustomerProduct: rawIdCustomerProduct, publicCode: incomingPublicCode }, trovato: { idCustomer: existing.idCustomer, email: existing.email, publicCode: existing.publicCode }, sorgente: "bacco" }, incomingPayload);
                 }
               }
 
@@ -888,7 +889,7 @@ async function processDataInBackground(
                 }
                 const logMsgA = `📥 CLIENTE ESISTENTE | cercato ${cercato} → trovato db.idCustomer="${existing.idCustomer || ""}" db.email="${existing.email || ""}" db.mobile="${existing.mobile || ""}" db.publicCode="${existing.publicCode || ""}"`;
                 console.log(`[${getItalianDateString()}] ${logMsgA}`);
-                sendLog(restaurant_code, "info", logMsgA, { cercato, trovato: { idCustomer: existing.idCustomer, email: existing.email, mobile: existing.mobile, publicCode: existing.publicCode }, sorgente: arrivedFrom });
+                sendLog(restaurant_code, "info", logMsgA, { cercato, trovato: { idCustomer: existing.idCustomer, email: existing.email, mobile: existing.mobile, publicCode: existing.publicCode }, sorgente: arrivedFrom }, incomingPayload);
               }
             } else {
               // Nessun ID esterno → identificabile solo tramite contact_key
@@ -917,7 +918,7 @@ async function processDataInBackground(
                   }
                   const logMsgC = `📥 CLIENTE ESISTENTE | cercato ${cercato} → trovato db.idCustomer="${existing.idCustomer || ""}" db.email="${existing.email || ""}" db.mobile="${existing.mobile || ""}" db.publicCode="${existing.publicCode || ""}"`;
                   console.log(`[${getItalianDateString()}] ${logMsgC}`);
-                  sendLog(restaurant_code, "info", logMsgC, { cercato, trovato: { idCustomer: existing.idCustomer, email: existing.email, mobile: existing.mobile, publicCode: existing.publicCode }, sorgente: arrivedFrom });
+                  sendLog(restaurant_code, "info", logMsgC, { cercato, trovato: { idCustomer: existing.idCustomer, email: existing.email, mobile: existing.mobile, publicCode: existing.publicCode }, sorgente: arrivedFrom }, incomingPayload);
                 }
               }
             }
@@ -928,7 +929,7 @@ async function processDataInBackground(
             const idLabel = effectiveCustomerId || rawIdCustomerProduct || "(nessuno)";
             const logMsgNew = `🆕 NUOVO CLIENTE | id=${idLabel}`;
             console.log(`[${getItalianDateString()}] ${logMsgNew}`);
-            sendLog(restaurant_code, "success", logMsgNew, { id: idLabel, sorgente: arrivedFrom, email: rawEmail, mobile: rawPhone });
+            sendLog(restaurant_code, "success", logMsgNew, { id: idLabel, sorgente: arrivedFrom, email: rawEmail, mobile: rawPhone }, incomingPayload);
           }
 
           if (existing) {
