@@ -285,24 +285,6 @@ export async function POST(request: NextRequest) {
     const clientIP = request.headers.get('x-forwarded-for')?.split(',')[0] || 'unknown';
     console.log(`[${getItalianDateString()}] Request from ${clientIP} - Payload: customers=${body.customerList?.length || 0}, movements=${body.movimenti?.length || 0}, sales=${body.movimentivend?.length || 0}, tickets=${body.ticketList?.length || 0}`);
 
-    // Invia il payload completo al sistema di log remoto (fire-and-forget)
-    // responsePayload = copia pulita del body ricevuto, a livello root (non dentro metadata)
-    const cleanBody = JSON.parse(JSON.stringify(body));
-    sendLog(
-      restaurant_code,
-      "info",
-      "📨 PAYLOAD IN ARRIVO",
-      {
-        clientIP,
-        subscriber_code,
-        customers: body.customerList?.length || 0,
-        movements: body.movimenti?.length || 0,
-        sales: body.movimentivend?.length || 0,
-        tickets: body.ticketList?.length || 0,
-      },
-      cleanBody
-    );
-
    
     notifyExternalBill(body, restaurant_code, subscriber_code);
 
@@ -319,7 +301,7 @@ export async function POST(request: NextRequest) {
       }
     }, { status: 201 });
 
-    processDataInBackground(body, restaurant_code, subscriber_code, clientIP, start, limit, cleanBody);
+    processDataInBackground(body, restaurant_code, subscriber_code, clientIP, start, limit, JSON.parse(JSON.stringify(body)));
 
     return response;
   } catch (error) {
@@ -861,61 +843,40 @@ async function processDataInBackground(
               effectiveCustomerId = customer.idCustomerExt;
 
               const searchOr: any[] = [{ idCustomer: effectiveCustomerId }];
-              if (contactKey) {
-                searchOr.push({ contact_key: contactKey });
-              }
               const emailVariants = Array.from(new Set([customer.email, normalizedEmail].filter(Boolean)));
               for (const emailVariant of emailVariants) {
                 searchOr.push({ email: emailVariant });
               }
 
-              const whereClause: any = { restaurant_code };
-              if (searchOr.length > 0) {
-                whereClause.OR = searchOr;
-              }
-
+              const whereClause: any = { restaurant_code, OR: searchOr };
               existing = await prisma.customer.findFirst({ where: whereClause });
 
               if (existing) {
-                // Determina quale campo ha probabilmente causato il match
                 let cercato = "";
                 if (effectiveCustomerId && existing.idCustomer?.trim() === effectiveCustomerId) {
                   cercato = `idCustomer="${effectiveCustomerId}"`;
-                } else if (contactKey && existing.contact_key === contactKey) {
-                  cercato = `contact_key="${contactKey}"`;
                 } else {
                   const foundEmail = emailVariants.find(e => existing.email === e);
-                  cercato = foundEmail ? `email="${foundEmail}"` : `contact_key="${contactKey}"`;
+                  cercato = foundEmail ? `email="${foundEmail}"` : `idCustomer="${effectiveCustomerId}"`;
                 }
                 const logMsgA = `📥 CLIENTE ESISTENTE | cercato ${cercato} → trovato db.idCustomer="${existing.idCustomer || ""}" db.email="${existing.email || ""}" db.mobile="${existing.mobile || ""}" db.publicCode="${existing.publicCode || ""}"`;
                 console.log(`[${getItalianDateString()}] ${logMsgA}`);
                 sendLog(restaurant_code, "info", logMsgA, { cercato, trovato: { idCustomer: existing.idCustomer, email: existing.email, mobile: existing.mobile, publicCode: existing.publicCode }, sorgente: arrivedFrom }, incomingPayload);
               }
             } else {
-              // Nessun ID esterno → identificabile solo tramite contact_key
+              // Nessun idCustomerExt → cerca solo per email
               effectiveCustomerId = "";
 
-              const searchOr: any[] = [];
-              if (contactKey) {
-                searchOr.push({ contact_key: contactKey });
-              }
               const emailVariants = Array.from(new Set([customer.email, normalizedEmail].filter(Boolean)));
-              for (const emailVariant of emailVariants) {
-                searchOr.push({ email: emailVariant });
-              }
+              const searchOr: any[] = emailVariants.map(e => ({ email: e }));
 
               if (searchOr.length > 0) {
                 const whereClause: any = { restaurant_code, OR: searchOr };
                 existing = await prisma.customer.findFirst({ where: whereClause });
 
                 if (existing) {
-                  let cercato = "";
-                  if (contactKey && existing.contact_key === contactKey) {
-                    cercato = `contact_key="${contactKey}"`;
-                  } else {
-                    const foundEmail = emailVariants.find(e => existing.email === e);
-                    cercato = foundEmail ? `email="${foundEmail}"` : `contact_key="${contactKey}"`;
-                  }
+                  const foundEmail = emailVariants.find(e => existing.email === e) || customer.email;
+                  const cercato = `email="${foundEmail}"`;
                   const logMsgC = `📥 CLIENTE ESISTENTE | cercato ${cercato} → trovato db.idCustomer="${existing.idCustomer || ""}" db.email="${existing.email || ""}" db.mobile="${existing.mobile || ""}" db.publicCode="${existing.publicCode || ""}"`;
                   console.log(`[${getItalianDateString()}] ${logMsgC}`);
                   sendLog(restaurant_code, "info", logMsgC, { cercato, trovato: { idCustomer: existing.idCustomer, email: existing.email, mobile: existing.mobile, publicCode: existing.publicCode }, sorgente: arrivedFrom }, incomingPayload);
