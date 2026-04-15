@@ -218,7 +218,46 @@ function notifyExternalBill(data: any, restaurant_code: string, subscriber_code:
 }
 
 // ─────────────────────────────────────────────────────────────
-// POST /api/mapper/storedata?restaurant_code=XXX&subscriber_code=YYY
+// SISTEMA DI LOG REMOTO
+//
+// Invia i log a https://log-app-red.vercel.app/api/logs
+// - app      → publicCode del merchant (restaurant_code)
+// - level    → "success" | "error" | "warning" | "info"
+// - message  → descrizione dell'evento
+// - metadata → dati aggiuntivi dell'evento
+//
+// Fire-and-forget: non bloccante.
+// ─────────────────────────────────────────────────────────────
+function sendLog(
+  publicCode: string,
+  level: "success" | "error" | "warning" | "info",
+  message: string,
+  metadata?: Record<string, any>,
+  responsePayload?: any
+): void {
+  const body: Record<string, any> = {
+    app: publicCode || "unknown",
+    level,
+    message,
+    metadata: metadata ?? {},
+    environment: process.env.NODE_ENV || "production",
+  };
+
+  if (responsePayload !== undefined) {
+    body.responsePayload = responsePayload;
+  }
+
+  fetch("https://log-app-red.vercel.app/api/logs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(8000),
+  }).catch(() => {
+    // silenzioso — il log remoto non è bloccante
+  });
+}
+
+
 //
 // Flusso:
 //   1. Parsing e validazione dimensione payload
@@ -245,6 +284,24 @@ export async function POST(request: NextRequest) {
 
     const clientIP = request.headers.get('x-forwarded-for')?.split(',')[0] || 'unknown';
     console.log(`[${getItalianDateString()}] Request from ${clientIP} - Payload: customers=${body.customerList?.length || 0}, movements=${body.movimenti?.length || 0}, sales=${body.movimentivend?.length || 0}, tickets=${body.ticketList?.length || 0}`);
+
+    // Invia il payload completo al sistema di log remoto (fire-and-forget)
+    // responsePayload = copia pulita del body ricevuto, a livello root (non dentro metadata)
+    const cleanBody = JSON.parse(JSON.stringify(body));
+    sendLog(
+      restaurant_code,
+      "info",
+      "📨 PAYLOAD IN ARRIVO",
+      {
+        clientIP,
+        subscriber_code,
+        customers: body.customerList?.length || 0,
+        movements: body.movimenti?.length || 0,
+        sales: body.movimentivend?.length || 0,
+        tickets: body.ticketList?.length || 0,
+      },
+      cleanBody
+    );
 
    
     notifyExternalBill(body, restaurant_code, subscriber_code);
@@ -527,26 +584,35 @@ async function processDataInBackground(
               const orderCustomerId = orderWebInfo?.IDCustomer || "";
 
               // Cerca il Customer nel DB per valorizzare reference_customer in CustomerOrdersFlat
-              // Match su idCustomer == orderCustomerId e restaurant_code
-              let ticketReferenceCustomerId = "";
-              if (orderCustomerId) {
-                const matchedTicketCustomer = await prisma.customer.findFirst({
-                  where: { idCustomer: orderCustomerId, restaurant_code },
-                  select: { id: true },
-                });
-                if (matchedTicketCustomer) {
-                  ticketReferenceCustomerId = matchedTicketCustomer.id;
-                }
-              }
-
-              // Se non c'è OrderWebInfo oppure mancano sia IDCustomer che contact_key,
-              // non possiamo collegare il ticket a nessun cliente → skip
-              // (es. ordini al tavolo senza tessera fidelity)
-              if (!orderWebInfo || (!orderCustomerId && !ticketContactKey)) {
-                console.warn(`[${getItalianDateString()}] Ticket DylogApp senza identificativi cliente utili, skip.`);
+              // REGOLA: se OrderWebInfo è assente, IDCustomer è assente, o il Customer
+              // non esiste nel DB → skip completo. Non salviamo mai un ticket senza
+              // reference_customer risolto (stesso gate duro applicato a Signa).
+              if (!orderWebInfo) {
+                console.log(`[${getItalianDateString()}] [BACCO] SKIP IDTickets=${ticket.IDTickets}: OrderWebInfo assente → ticket ignorato.`);
                 saltati++;
                 continue;
               }
+
+              if (!orderCustomerId) {
+                console.log(`[${getItalianDateString()}] [BACCO] SKIP IDTickets=${ticket.IDTickets}: IDCustomer assente in OrderWebInfo → ticket ignorato.`);
+                saltati++;
+                continue;
+              }
+
+              // Match su idCustomer == orderCustomerId e restaurant_code
+              const matchedTicketCustomer = await prisma.customer.findFirst({
+                where: { idCustomer: orderCustomerId, restaurant_code },
+                select: { id: true },
+              });
+
+              if (!matchedTicketCustomer) {
+                console.log(`[${getItalianDateString()}] [BACCO] SKIP IDTickets=${ticket.IDTickets}: nessun Customer trovato per idCustomer="${orderCustomerId}" restaurant_code="${restaurant_code}" → ticket ignorato.`);
+                saltati++;
+                continue;
+              }
+
+              const ticketReferenceCustomerId = matchedTicketCustomer.id;
+              console.log(`[${getItalianDateString()}] [BACCO] Customer trovato: id=${ticketReferenceCustomerId} (idCustomer=${orderCustomerId}).`);
 
               const productItems = [];
               let totalAmount = 0;
@@ -605,6 +671,7 @@ async function processDataInBackground(
                       update: {
                         idCustomer: orderCustomerId,
                         contact_key: ticketContactKey,
+                        reference_customer: ticketReferenceCustomerId,
                         order_date: orderDate,
                         order_time: moment(ticket.DateBill).format("HH:mm:ss"),
                         order_year: orderDate.getFullYear(),
@@ -627,6 +694,7 @@ async function processDataInBackground(
                         detail_id: `${restaurant_code}_${ticket.IDTickets}_${detail.BillRow || (index + 1)}`,
                         idCustomer: orderCustomerId,
                         contact_key: ticketContactKey,
+                        reference_customer: ticketReferenceCustomerId,
                         order_id: ticket.IDTickets?.toString() || "",
                         public_code: restaurant_code,
                         source: "restaurant",
@@ -697,20 +765,15 @@ async function processDataInBackground(
           const rawIdCustomerProduct = customer.idCustomerProduct?.toString() || "";
           const incomingPublicCode = customer.publicCode?.toString() || "";
 
-          let existing = null;
+          let existing: any = null;
           let effectiveCustomerId = "";
 
           if (arrivedFrom === "app") {
             // ── CASO APP (EasyAppear) ──────────────────────────────────
-            // Strategia di lookup in ordine di priorità:
-            //   1. Cerca per idCustomer (ID univoco assegnato dall'app)
-            //   2. Se non trovato, cerca per publicCode + email insieme
-            //      (stesso negozio + stesso contatto → stesso cliente)
-            // Senza idCustomer il record non può essere gestito → skip.
             effectiveCustomerId = customer.idCustomerExt || customer.idCustomer;
 
             if (!effectiveCustomerId) {
-              console.warn(`[${getItalianDateString()}] Cliente App senza idCustomer/idCustomerExt, skip.`);
+              console.warn(`[${getItalianDateString()}] [APP] SKIP: idCustomer e idCustomerExt entrambi assenti.`);
               continue;
             }
 
@@ -719,44 +782,69 @@ async function processDataInBackground(
               where: { restaurant_code, idCustomer: effectiveCustomerId },
             });
 
-            // Step 2: fallback su publicCode + email (se email disponibile)
-            if (!existing && incomingPublicCode && rawEmail) {
-              console.log(`[${getItalianDateString()}] APP - idCustomer ${effectiveCustomerId} non trovato, fallback su publicCode+email`);
-              existing = await prisma.customer.findFirst({
-                where: { restaurant_code, publicCode: incomingPublicCode, email: rawEmail },
-              });
+            if (existing) {
+              const logMsg = `📥 CLIENTE ESISTENTE | cercato idCustomer="${effectiveCustomerId}" → trovato db.idCustomer="${existing.idCustomer}" db.email="${existing.email || ""}" db.mobile="${existing.mobile || ""}" db.publicCode="${existing.publicCode || ""}"`;
+              console.log(`[${getItalianDateString()}] ${logMsg}`);
+              sendLog(restaurant_code, "info", logMsg, { cercato: { idCustomer: effectiveCustomerId }, trovato: { idCustomer: existing.idCustomer, email: existing.email, mobile: existing.mobile, publicCode: existing.publicCode }, sorgente: arrivedFrom });
+            } else {
+              // Step 2: fallback su (publicCode + email) OPPURE (publicCode + phone)
+              if (incomingPublicCode && (rawEmail || rawPhone)) {
+                const orClauses: any[] = [];
+                if (rawEmail) orClauses.push({ publicCode: incomingPublicCode, email: rawEmail });
+                if (rawPhone) orClauses.push({ publicCode: incomingPublicCode, mobile: rawPhone });
+
+                existing = await prisma.customer.findFirst({
+                  where: { restaurant_code, OR: orClauses },
+                });
+
+                if (existing) {
+                  const matchReason = rawEmail && existing.email === rawEmail
+                    ? `cercato email="${rawEmail}" + publicCode="${incomingPublicCode}"`
+                    : `cercato phone="${rawPhone}" + publicCode="${incomingPublicCode}"`;
+                  const logMsg2 = `📥 CLIENTE ESISTENTE | ${matchReason} → trovato db.idCustomer="${existing.idCustomer || ""}" db.email="${existing.email || ""}" db.mobile="${existing.mobile || ""}" db.publicCode="${existing.publicCode || ""}"`;
+                  console.log(`[${getItalianDateString()}] ${logMsg2}`);
+                  sendLog(restaurant_code, "info", logMsg2, { cercato: { email: rawEmail, phone: rawPhone, publicCode: incomingPublicCode }, trovato: { idCustomer: existing.idCustomer, email: existing.email, mobile: existing.mobile, publicCode: existing.publicCode }, sorgente: arrivedFrom });
+                }
+              }
             }
 
           } else if (arrivedFrom === "bacco") {
             // ── CASO BACCO ────────────────────────────────────────────
-            // Se è presente idCustomer:
-            //   → cerca per idCustomer; se non trovato lo crea
-            // Se idCustomer non è presente:
-            //   → cerca per (publicCode + email) oppure (publicCode + idCustomerProduct)
-            //      perché l'email potrebbe essere cambiata ma l'ID POS no;
-            //      se non trovato lo crea
             effectiveCustomerId = customer.idCustomer?.toString() || "";
 
             if (effectiveCustomerId) {
-              // Cerca direttamente per idCustomer
               existing = await prisma.customer.findFirst({
                 where: { restaurant_code, idCustomer: effectiveCustomerId },
               });
-              console.log(`[${getItalianDateString()}] BACCO - ricerca per idCustomer: ${effectiveCustomerId} → ${existing ? 'TROVATO' : 'NON TROVATO'}`);
+
+              if (existing) {
+                const logMsgB1 = `📥 CLIENTE ESISTENTE | cercato idCustomer="${effectiveCustomerId}" → trovato db.idCustomer="${existing.idCustomer || ""}" db.email="${existing.email || ""}" db.mobile="${existing.mobile || ""}" db.publicCode="${existing.publicCode || ""}"`;
+                console.log(`[${getItalianDateString()}] ${logMsgB1}`);
+                sendLog(restaurant_code, "info", logMsgB1, { cercato: { idCustomer: effectiveCustomerId }, trovato: { idCustomer: existing.idCustomer, email: existing.email, mobile: existing.mobile, publicCode: existing.publicCode }, sorgente: "bacco" });
+              }
             } else {
-              // Nessun idCustomer → cerca per publicCode + email, poi per publicCode + idCustomerProduct
               if (incomingPublicCode && rawEmail) {
                 existing = await prisma.customer.findFirst({
                   where: { restaurant_code, publicCode: incomingPublicCode, email: rawEmail },
                 });
-                console.log(`[${getItalianDateString()}] BACCO - ricerca per publicCode+email → ${existing ? 'TROVATO' : 'NON TROVATO'}`);
+
+                if (existing) {
+                  const logMsgB2 = `📥 CLIENTE ESISTENTE | cercato email="${rawEmail}" + publicCode="${incomingPublicCode}" → trovato db.idCustomer="${existing.idCustomer || ""}" db.email="${existing.email || ""}" db.publicCode="${existing.publicCode || ""}"`;
+                  console.log(`[${getItalianDateString()}] ${logMsgB2}`);
+                  sendLog(restaurant_code, "info", logMsgB2, { cercato: { email: rawEmail, publicCode: incomingPublicCode }, trovato: { idCustomer: existing.idCustomer, email: existing.email, publicCode: existing.publicCode }, sorgente: "bacco" });
+                }
               }
 
               if (!existing && incomingPublicCode && rawIdCustomerProduct) {
                 existing = await prisma.customer.findFirst({
                   where: { restaurant_code, publicCode: incomingPublicCode, idCustomer: rawIdCustomerProduct },
                 });
-                console.log(`[${getItalianDateString()}] BACCO - ricerca per publicCode+idCustomerProduct (${rawIdCustomerProduct}) → ${existing ? 'TROVATO' : 'NON TROVATO'}`);
+
+                if (existing) {
+                  const logMsgB3 = `📥 CLIENTE ESISTENTE | cercato idCustomerProduct="${rawIdCustomerProduct}" + publicCode="${incomingPublicCode}" → trovato db.idCustomer="${existing.idCustomer || ""}" db.email="${existing.email || ""}" db.publicCode="${existing.publicCode || ""}"`;
+                  console.log(`[${getItalianDateString()}] ${logMsgB3}`);
+                  sendLog(restaurant_code, "info", logMsgB3, { cercato: { idCustomerProduct: rawIdCustomerProduct, publicCode: incomingPublicCode }, trovato: { idCustomer: existing.idCustomer, email: existing.email, publicCode: existing.publicCode }, sorgente: "bacco" });
+                }
               }
 
               // Se trovato tramite idCustomerProduct usalo come effectiveCustomerId
@@ -786,6 +874,22 @@ async function processDataInBackground(
               }
 
               existing = await prisma.customer.findFirst({ where: whereClause });
+
+              if (existing) {
+                // Determina quale campo ha probabilmente causato il match
+                let cercato = "";
+                if (effectiveCustomerId && existing.idCustomer?.trim() === effectiveCustomerId) {
+                  cercato = `idCustomer="${effectiveCustomerId}"`;
+                } else if (contactKey && existing.contact_key === contactKey) {
+                  cercato = `contact_key="${contactKey}"`;
+                } else {
+                  const foundEmail = emailVariants.find(e => existing.email === e);
+                  cercato = foundEmail ? `email="${foundEmail}"` : `contact_key="${contactKey}"`;
+                }
+                const logMsgA = `📥 CLIENTE ESISTENTE | cercato ${cercato} → trovato db.idCustomer="${existing.idCustomer || ""}" db.email="${existing.email || ""}" db.mobile="${existing.mobile || ""}" db.publicCode="${existing.publicCode || ""}"`;
+                console.log(`[${getItalianDateString()}] ${logMsgA}`);
+                sendLog(restaurant_code, "info", logMsgA, { cercato, trovato: { idCustomer: existing.idCustomer, email: existing.email, mobile: existing.mobile, publicCode: existing.publicCode }, sorgente: arrivedFrom });
+              }
             } else {
               // Nessun ID esterno → identificabile solo tramite contact_key
               effectiveCustomerId = "";
@@ -802,69 +906,29 @@ async function processDataInBackground(
               if (searchOr.length > 0) {
                 const whereClause: any = { restaurant_code, OR: searchOr };
                 existing = await prisma.customer.findFirst({ where: whereClause });
+
+                if (existing) {
+                  let cercato = "";
+                  if (contactKey && existing.contact_key === contactKey) {
+                    cercato = `contact_key="${contactKey}"`;
+                  } else {
+                    const foundEmail = emailVariants.find(e => existing.email === e);
+                    cercato = foundEmail ? `email="${foundEmail}"` : `contact_key="${contactKey}"`;
+                  }
+                  const logMsgC = `📥 CLIENTE ESISTENTE | cercato ${cercato} → trovato db.idCustomer="${existing.idCustomer || ""}" db.email="${existing.email || ""}" db.mobile="${existing.mobile || ""}" db.publicCode="${existing.publicCode || ""}"`;
+                  console.log(`[${getItalianDateString()}] ${logMsgC}`);
+                  sendLog(restaurant_code, "info", logMsgC, { cercato, trovato: { idCustomer: existing.idCustomer, email: existing.email, mobile: existing.mobile, publicCode: existing.publicCode }, sorgente: arrivedFrom });
+                }
               }
             }
           }
 
-          // ── LOG RIEPILOGATIVO PRE-DECISIONE ────────────────────────
-          {
-            const idLabel       = effectiveCustomerId || rawIdCustomerProduct || "(nessuno)";
-            const emailLabel    = rawEmail            || "(nessuna)";
-            const phoneLabel    = rawPhone            || "(nessuno)";
-            const sourceLabel   = arrivedFrom         || "(sconosciuta)";
-
-            if (existing) {
-              // Il cliente è stato trovato nel DB
-              const existingIdLabel = existing.idCustomer?.trim()
-                ? `idCustomer=${existing.idCustomer}`
-                : `solo contact_key=${existing.contact_key || "(vuota)"}`;
-
-              const ownerLabel = existing.idCustomer?.trim()
-                ? "profilo APP (ha già idCustomer)"
-                : "profilo POS (senza idCustomer)";
-
-              console.log(
-                `[${getItalianDateString()}] 📥 CLIENTE ESISTENTE trovato` +
-                ` | sorgente="${sourceLabel}"` +
-                ` | id_in_arrivo=${idLabel}` +
-                ` | email=${emailLabel}` +
-                ` | telefono=${phoneLabel}` +
-                ` | db_record: ${existingIdLabel} (${ownerLabel})` +
-                ` | db_id=${existing.id}`
-              );
-
-              // Avviso anticipato su cosa succederà
-              if (existing.idCustomer?.trim() && arrivedFrom !== "app") {
-                console.log(
-                  `[${getItalianDateString()}] ⚠️  UPDATE BLOCCATO` +
-                  ` | motivo: il record ha già un idCustomer (${existing.idCustomer})` +
-                  ` e la sorgente "${sourceLabel}" non può sovrascriverlo`
-                );
-              } else if (arrivedFrom === "app" && !existing.idCustomer?.trim()) {
-                console.log(
-                  `[${getItalianDateString()}] 🔗 MERGE POTENZIALE` +
-                  ` | l'APP sta agganciando un profilo POS esistente` +
-                  ` | db_id=${existing.id}` +
-                  ` | idReferenceGateway=${existing.idReferenceGateway || "(vuoto)"}`
-                );
-              } else {
-                console.log(
-                  `[${getItalianDateString()}] ✏️  UPDATE CONSENTITO` +
-                  ` | sorgente="${sourceLabel}"` +
-                  ` | idCustomer=${idLabel}`
-                );
-              }
-            } else {
-              // Cliente non trovato → verrà creato
-              console.log(
-                `[${getItalianDateString()}] 🆕 NUOVO CLIENTE` +
-                ` | sorgente="${sourceLabel}"` +
-                ` | id=${idLabel}` +
-                ` | email=${emailLabel}` +
-                ` | telefono=${phoneLabel}` +
-                ` | publicCode=${incomingPublicCode || "(nessuno)"}`
-              );
-            }
+          // ── LOG NUOVO CLIENTE ──────────────────────────────────────
+          if (!existing) {
+            const idLabel = effectiveCustomerId || rawIdCustomerProduct || "(nessuno)";
+            const logMsgNew = `🆕 NUOVO CLIENTE | id=${idLabel}`;
+            console.log(`[${getItalianDateString()}] ${logMsgNew}`);
+            sendLog(restaurant_code, "success", logMsgNew, { id: idLabel, sorgente: arrivedFrom, email: rawEmail, mobile: rawPhone });
           }
 
           if (existing) {
@@ -881,21 +945,8 @@ async function processDataInBackground(
                   where: { id: existing.id },
                   data: { idCustomerProduct: rawIdCustomerProduct, updateAt: new Date() },
                 });
-                console.log(
-                  `[${getItalianDateString()}] � GUARDIA 1 - data non recente ma salvato idCustomerProduct="${rawIdCustomerProduct}"` +
-                  ` | idCustomer=${existing.idCustomer} ora collegato al gestionale POS` +
-                  ` | sorgente="${arrivedFrom}"`
-                );
                 aggiornatiParziale++;
               } else {
-                console.log(
-                  `[${getItalianDateString()}] �🚫 GUARDIA 1 - skip per data` +
-                  ` | sorgente="${arrivedFrom}"` +
-                  ` | idCustomer=${effectiveCustomerId || customer.email}` +
-                  ` | incomingLastUpdate="${incomingLastUpdate}"` +
-                  ` | existingLastUpdate="${existingLastUpdate}"` +
-                  ` | motivo: dato in arrivo non più recente`
-                );
                 saltati++;
               }
               continue;
@@ -907,37 +958,16 @@ async function processDataInBackground(
             // Questo campo serve a collegare il profilo app con il gestionale POS.
             if (existing.idCustomer && existing.idCustomer.trim() !== "" && arrivedFrom !== "app") {
               if (rawIdCustomerProduct && !existing.idCustomerProduct?.trim()) {
-                // Salva solo idCustomerProduct (collega profilo app ↔ gestionale POS)
                 await prisma.customer.update({
                   where: { id: existing.id },
                   data: { idCustomerProduct: rawIdCustomerProduct, updateAt: new Date() },
                 });
-                console.log(
-                  `[${getItalianDateString()}] 💾 GUARDIA 2 - salvato idCustomerProduct="${rawIdCustomerProduct}"` +
-                  ` | idCustomer=${existing.idCustomer} ora collegato al gestionale POS` +
-                  ` | sorgente="${arrivedFrom}"`
-                );
                 aggiornatiParziale++;
               } else {
-                console.log(
-                  `[${getItalianDateString()}] 🚫 GUARDIA 2 - skip per protezione profilo APP` +
-                  ` | sorgente="${arrivedFrom}"` +
-                  ` | existing.idCustomer="${existing.idCustomer}"` +
-                  ` | motivo: solo 'app' può modificare un profilo con idCustomer`
-                );
                 saltati++;
               }
               continue;
             }
-
-            console.log(
-              `[${getItalianDateString()}] ✅ TUTTE LE GUARDIE PASSATE - procedo con UPDATE` +
-              ` | sorgente="${arrivedFrom}"` +
-              ` | idCustomer=${effectiveCustomerId || "(nessuno)"}` +
-              ` | incomingLastUpdate="${incomingLastUpdate || "(vuota)"}"` +
-              ` | existingLastUpdate="${existingLastUpdate || "(vuota)"}"` +
-              ` | db_id=${existing.id}`
-            );
 
             // Per i dati provenienti dall'app usiamo i valori in arrivo come
             // priorità assoluta (sovrascrittura diretta): l'app è la fonte
@@ -950,7 +980,7 @@ async function processDataInBackground(
                 : (incoming || fallback || "");  // altri: fallback se il valore in arrivo è falsy
 
             const filteredCustomerData = {
-              idReferenceGateway: pick(customer.idReferenceGateway, existing.idReferenceGateway),
+              idReferenceGateway: pick(customer.idReferenceGateway,                         existing.idReferenceGateway),
               idCustomer: effectiveCustomerId || existing.idCustomer || "",
               // idCustomerProduct: viene aggiornato solo se arriva un valore nuovo
               // e il record in DB non ne aveva uno (o era vuoto).
@@ -992,9 +1022,6 @@ async function processDataInBackground(
               updateAt: new Date(),
             };
 
-            console.log(`[${getItalianDateString()}] DATI FILTRATI PER UPDATE CUSTOMER ${effectiveCustomerId || customer.idCustomer}:`);
-            console.log(JSON.stringify(filteredCustomerData, null, 2));
-
             await prisma.customer.update({
               where: { id: existing.id },
               data: {
@@ -1003,7 +1030,6 @@ async function processDataInBackground(
                 contact_key: contactKey || existing.contact_key || "",
               },
             });
-            console.log(`[${getItalianDateString()}] Cliente con idCustomer ${effectiveCustomerId || customer.idCustomer} aggiornato con successo.`);
 
             // ── MERGE DETECTION ─────────────────────────────────────
             // Rilevamento merge anagrafico: si verifica in due scenari:
@@ -1083,9 +1109,6 @@ async function processDataInBackground(
               subscriber_code,
             };
 
-            console.log(`[${getItalianDateString()}] DATI FILTRATI PER CREATE CUSTOMER ${effectiveCustomerId || customer.idCustomer}:`);
-            console.log(JSON.stringify(filteredCustomerData, null, 2));
-
             await prisma.customer.create({
               data: {
                 ...filteredCustomerData,
@@ -1094,7 +1117,6 @@ async function processDataInBackground(
                 createdAt: new Date(),
               },
             });
-            console.log(`[${getItalianDateString()}] Nuovo cliente con idCustomer ${effectiveCustomerId || customer.idCustomer} creato con successo.`);
             creati++;
           }
         } catch (error) {
