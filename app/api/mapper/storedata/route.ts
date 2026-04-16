@@ -235,11 +235,16 @@ function sendLog(
   metadata?: Record<string, any>,
   responsePayload?: any
 ): void {
+  const mergedMetadata: Record<string, any> = { ...(metadata ?? {}) };
+  if (responsePayload !== undefined) {
+    mergedMetadata.incomingPayload = responsePayload;
+  }
+
   const body: Record<string, any> = {
     app: publicCode || "unknown",
     level,
     message,
-    metadata: metadata ?? {},
+    metadata: mergedMetadata,
     environment: process.env.NODE_ENV || "production",
   };
 
@@ -587,7 +592,7 @@ async function processDataInBackground(
 
               if (!orderCustomerId) {
                 console.log(`[${getItalianDateString()}] [BACCO] SKIP IDTickets=${ticket.IDTickets}: IDCustomer assente in OrderWebInfo → ticket ignorato.`);
-                sendLog(restaurant_code, "warning", `⚠️ BACCO SKIP IDTickets=${ticket.IDTickets}: IDCustomer assente in OrderWebInfo`, { IDTickets: ticket.IDTickets }, incomingPayload);
+                sendLog(restaurant_code, "warning", `⚠️ BACCO SKIP IDTickets=${ticket.IDTickets}: IDCustomer assente in OrderWebInfo`, { IDTickets: ticket.IDTickets }, ticket);
                 saltati++;
                 continue;
               }
