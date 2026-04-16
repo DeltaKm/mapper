@@ -345,6 +345,7 @@ async function processDataInBackground(
 
     if (Array.isArray(body.movimenti) && body.movimenti.length > 0) {
       console.log(`[${getItalianDateString()}] Processando ${body.movimenti.length} movimenti Signa per SignaMovimenti...`);
+      sendLog(restaurant_code, "info", `📦 MOVIMENTI SIGNA IN ARRIVO: ${body.movimenti.length} movimenti`, { count: body.movimenti.length, restaurant_code }, incomingPayload);
       let salvati = 0, saltati = 0, errori = 0;
       
       for (const movimento of body.movimenti) {
@@ -362,6 +363,7 @@ async function processDataInBackground(
           
           if (existingMovimento) {
             console.log(`[${getItalianDateString()}] [SIGNA] SKIP duplicato: IDReferencePOS=${movimento.IDReferencePOS} già presente (id=${existingMovimento.id}).`);
+            sendLog(restaurant_code, "warning", `⚠️ SIGNA SKIP duplicato: IDReferencePOS=${movimento.IDReferencePOS}`, { IDReferencePOS: movimento.IDReferencePOS, existingId: existingMovimento.id }, incomingPayload);
             saltati++;
             continue;
           }
@@ -375,6 +377,7 @@ async function processDataInBackground(
 
           if (!signaIdCustomer) {
             console.log(`[${getItalianDateString()}] [SIGNA] SKIP IDReferencePOS=${movimento.IDReferencePOS}: idCustomer assente nel payload → movimento ignorato.`);
+            sendLog(restaurant_code, "warning", `⚠️ SIGNA SKIP IDReferencePOS=${movimento.IDReferencePOS}: idCustomer assente`, { IDReferencePOS: movimento.IDReferencePOS }, incomingPayload);
             saltati++;
             continue;
           }
@@ -389,6 +392,7 @@ async function processDataInBackground(
 
           if (!matchedCustomer) {
             console.log(`[${getItalianDateString()}] [SIGNA] SKIP IDReferencePOS=${movimento.IDReferencePOS}: nessun Customer trovato per idCustomerProduct="${signaIdCustomer}" restaurant_code="${restaurant_code}" → movimento ignorato.`);
+            sendLog(restaurant_code, "warning", `⚠️ SIGNA SKIP IDReferencePOS=${movimento.IDReferencePOS}: nessun Customer per idCustomerProduct="${signaIdCustomer}"`, { IDReferencePOS: movimento.IDReferencePOS, idCustomerProduct: signaIdCustomer }, incomingPayload);
             saltati++;
             continue;
           }
@@ -421,6 +425,7 @@ async function processDataInBackground(
           });
           salvati++;
           console.log(`[${getItalianDateString()}] [SIGNA] SignaMovimenti salvato: IDReferencePOS=${movimento.IDReferencePOS}.`);
+          sendLog(restaurant_code, "success", `✅ SIGNA vendita salvata: IDReferencePOS=${movimento.IDReferencePOS} customer=${signaIdCustomer}`, { IDReferencePOS: movimento.IDReferencePOS, idCustomerProduct: signaIdCustomer, referenceCustomerId, dettagli: Array.isArray(movimento.dettagli) ? movimento.dettagli.length : 0 }, incomingPayload);
 
           // Estrae i dati cliente annidati nel movimento (campo "customer")
           // per ricavare la contact_key e collegare i dettagli a CustomerOrdersFlat
@@ -518,14 +523,17 @@ async function processDataInBackground(
           }
         } catch (error) {
           console.error(`[${getItalianDateString()}] [SIGNA] ERRORE GENERALE movimento IDReferencePOS=${movimento.IDReferencePOS}: ${error}`);
+          sendLog(restaurant_code, "error", `❌ SIGNA ERRORE movimento IDReferencePOS=${movimento.IDReferencePOS}: ${error instanceof Error ? error.message : error}`, { IDReferencePOS: movimento.IDReferencePOS }, incomingPayload);
           errori++;
         }
       }
       console.log(`[${getItalianDateString()}] Completato processamento movimenti Signa: ${salvati} salvati, ${saltati} saltati, ${errori} errori`);
+      sendLog(restaurant_code, "info", `📊 SIGNA completato: ${salvati} salvati, ${saltati} saltati, ${errori} errori`, { salvati, saltati, errori }, incomingPayload);
     }
 
     if (Array.isArray(body.TicketList) && body.TicketList.length > 0) {
       console.log(`[${getItalianDateString()}] Processando ${body.TicketList.length} ticket DylogApp...`);
+      sendLog(restaurant_code, "info", `🎫 TICKET DYLOGAPP IN ARRIVO: ${body.TicketList.length} ticket`, { count: body.TicketList.length, restaurant_code }, incomingPayload);
       let salvati = 0, saltati = 0, errori = 0, erroriUpdate = 0;
 
       for (const ticket of body.TicketList) {
@@ -572,12 +580,14 @@ async function processDataInBackground(
               // reference_customer risolto (stesso gate duro applicato a Signa).
               if (!orderWebInfo) {
                 console.log(`[${getItalianDateString()}] [BACCO] SKIP IDTickets=${ticket.IDTickets}: OrderWebInfo assente → ticket ignorato.`);
+                sendLog(restaurant_code, "warning", `⚠️ BACCO SKIP IDTickets=${ticket.IDTickets}: OrderWebInfo assente`, { IDTickets: ticket.IDTickets }, incomingPayload);
                 saltati++;
                 continue;
               }
 
               if (!orderCustomerId) {
                 console.log(`[${getItalianDateString()}] [BACCO] SKIP IDTickets=${ticket.IDTickets}: IDCustomer assente in OrderWebInfo → ticket ignorato.`);
+                sendLog(restaurant_code, "warning", `⚠️ BACCO SKIP IDTickets=${ticket.IDTickets}: IDCustomer assente in OrderWebInfo`, { IDTickets: ticket.IDTickets }, incomingPayload);
                 saltati++;
                 continue;
               }
@@ -590,6 +600,7 @@ async function processDataInBackground(
 
               if (!matchedTicketCustomer) {
                 console.log(`[${getItalianDateString()}] [BACCO] SKIP IDTickets=${ticket.IDTickets}: nessun Customer trovato per idCustomer="${orderCustomerId}" restaurant_code="${restaurant_code}" → ticket ignorato.`);
+                sendLog(restaurant_code, "warning", `⚠️ BACCO SKIP IDTickets=${ticket.IDTickets}: nessun Customer per idCustomer="${orderCustomerId}"`, { IDTickets: ticket.IDTickets, idCustomer: orderCustomerId }, incomingPayload);
                 saltati++;
                 continue;
               }
@@ -628,10 +639,12 @@ async function processDataInBackground(
                   }
                 });
                 console.log(`[${getItalianDateString()}] Ticket DylogApp con IDTickets ${orderWebInfo.IDTickets} salvato con successo.`);
+                sendLog(restaurant_code, "success", `✅ BACCO ticket salvato: IDTickets=${orderWebInfo.IDTickets} customer=${orderCustomerId}`, { IDTickets: orderWebInfo.IDTickets, idCustomer: orderCustomerId, referenceCustomerId: ticketReferenceCustomerId, items: ticket.DetailList?.length || 0 }, incomingPayload);
                 salvati++;
               } catch (error) {
               
                 console.error(`[${getItalianDateString()}] Errore nel salvare il ticket DylogApp con IDTickets ${orderWebInfo.IDTickets}: ${error}`);
+                sendLog(restaurant_code, "error", `❌ BACCO ERRORE salvataggio IDTickets=${orderWebInfo.IDTickets}: ${error instanceof Error ? error.message : error}`, { IDTickets: orderWebInfo.IDTickets }, incomingPayload);
                 errori++;
               }
 
@@ -709,10 +722,12 @@ async function processDataInBackground(
               }
             } catch (error) {
               console.error(`[${getItalianDateString()}] Errore generale nel processare ticket DylogApp: ${error}`);
+              sendLog(restaurant_code, "error", `❌ BACCO ERRORE GENERALE ticket IDTickets=${ticket.IDTickets}: ${error instanceof Error ? error.message : error}`, { IDTickets: ticket.IDTickets }, incomingPayload);
               errori++;
             }
       }
       console.log(`[${getItalianDateString()}] Completato processamento ticket DylogApp: ${salvati} salvati, ${saltati} saltati, ${errori} errori, ${erroriUpdate} errori di aggiornamento`);
+      sendLog(restaurant_code, "info", `📊 BACCO completato: ${salvati} salvati, ${saltati} saltati, ${errori} errori, ${erroriUpdate} errori update`, { salvati, saltati, errori, erroriUpdate }, incomingPayload);
     }
 
     if (Array.isArray(body.customerList) && body.customerList.length > 0) {
