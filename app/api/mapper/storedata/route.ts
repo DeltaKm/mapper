@@ -220,7 +220,7 @@ function notifyExternalBill(data: any, restaurant_code: string, subscriber_code:
 // ─────────────────────────────────────────────────────────────
 // SISTEMA DI LOG REMOTO
 //
-// Invia i log a https://log-app-red.vercel.app/api/logs
+// Invia i log a https://logservice-416914793312.europe-west1.run.app/api/logs
 // - app      → publicCode del merchant (restaurant_code)
 // - level    → "success" | "error" | "warning" | "info"
 // - message  → descrizione dell'evento
@@ -235,6 +235,7 @@ function sendLog(
   metadata?: Record<string, any>,
   responsePayload?: any
 ): void {
+  const xApiKey = process.env.LOG_SERVICE_API_KEY;
   const mergedMetadata: Record<string, any> = { ...(metadata ?? {}) };
   if (responsePayload !== undefined) {
     mergedMetadata.incomingPayload = responsePayload;
@@ -252,9 +253,12 @@ function sendLog(
     body.responsePayload = responsePayload;
   }
 
-  fetch("https://log-app-red.vercel.app/api/logs", {
+  fetch("https://logservice-416914793312.europe-west1.run.app/api/logs", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(xApiKey ? { "x-api-key": xApiKey } : {}),
+    },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(8000),
   }).catch(() => {
