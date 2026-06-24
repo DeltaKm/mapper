@@ -4,6 +4,7 @@ import prisma from "@/app/lib/prisma";
 import moment from "moment-timezone";
 import pLimit from "p-limit";
 import { updateCustomerOrders } from "@/app/lib/updateCustomerOrders";
+import { cleanString } from "@/app/utils/clean-string";
 
 const MAX_MB = 32; // da ridurre da 32MB a 16MB
 const CONCURRENCY = 3; // Ridotto da 5 a 3 per limitare uso memoria
@@ -425,8 +426,8 @@ async function processDataInBackground(
                   idReferenceGateway: customer.idReferenceGateway || existing.idReferenceGateway || "",
                   idCustomer: effectiveCustomerId,
                   gender: customer.gender || existing.gender || "",
-                  name: customer.name || existing.name || "",
-                  surname: customer.surname || existing.surname || "",
+                  name: cleanString(customer.name) || cleanString(existing.name) || "",
+                  surname: cleanString(customer.surname) || cleanString(existing.surname)|| "",
                   birth_data: customer.birth_data || existing.birth_data || "",
                   vat_number: customer.vat_number || existing.vat_number || "",
                   residence_address: customer.residence_address || existing.residence_address || "",
@@ -441,10 +442,10 @@ async function processDataInBackground(
                   domicile_province: customer.domicile_province || existing.domicile_province || "",
                   domicile_region: customer.domicile_region || existing.domicile_region || "",
                   domicile_state: customer.domicile_state || existing.domicile_state || "",
-                  mobile: customer.mobile || existing.mobile || "",
+                  mobile: cleanString(customer.mobile) || cleanString(existing.mobile) || "",
                   email: customer.email || existing.email || "",
-                  publicCode: customer.publicCode || existing.publicCode || "",
-                  subscriber: customer.subscriber || existing.subscriber || "",
+                  publicCode: cleanString(customer.publicCode) || cleanString(existing.publicCode) || "",
+                  subscriber: cleanString(customer.subscriber) || cleanString(existing.subscriber) || "",
                   arrived_from: customer.arrived_from || existing.arrived_from || "",
                   fidelity_card_number: customer.fidelity_card_number || existing.fidelity_card_number || "",
                   consent_marketing: customer.consent_marketing || existing.consent_marketing || "",
@@ -476,10 +477,10 @@ async function processDataInBackground(
                   idReferenceGateway: customer.idReferenceGateway || "",
                   idCustomer: effectiveCustomerId,
                   gender: customer.gender || "",
-                  name: customer.name || "",
-                  surname: customer.surname || "",
+                  name: cleanString(customer.name) || "",
+                  surname: cleanString(customer.surname) || "",
                   birth_data: customer.birth_data || "",
-                  vat_number: customer.vat_number || "",
+                  vat_number: cleanString(customer.vat_number) || "",
                   residence_address: customer.residence_address || "",
                   residence_zipcode: customer.residence_zipcode || "",
                   residence_city: customer.residence_city || "",
@@ -492,7 +493,7 @@ async function processDataInBackground(
                   domicile_province: customer.domicile_province || "",
                   domicile_region: customer.domicile_region || "",
                   domicile_state: customer.domicile_state || "",
-                  mobile: customer.mobile || "",
+                  mobile: cleanString(customer.mobile) || "",
                   email: customer.email || "",
                   publicCode: customer.publicCode || "",
                   subscriber: customer.subscriber || "",
