@@ -330,8 +330,8 @@ export async function POST(request: NextRequest) {
 //
 // Viene lanciato in modo asincrono DOPO aver risposto al chiamante.
 // Gestisce 3 tipi di dati in sequenza:
-//   1. movimenti Signa  → SignaMovimenti + CustomerOrdersFlat (source: "retail")
-//   2. TicketList       → ticketListBaccoDylogAPP + CustomerOrdersFlat (source: "restaurant")
+//   1. movimenti Signa  → (source: "retail")
+//   2. TicketList       → (source: "restaurant")
 //   3. customerList     → Customer (create o update)
 //
 // Il parametro `limit` (pLimit) controlla la concorrenza sulle operazioni DB
@@ -360,22 +360,6 @@ async function processDataInBackground(
       for (const movimento of body.movimenti) {
         try {
           console.log(`[${getItalianDateString()}] [SIGNA] ── Processo movimento IDReferencePOS=${movimento.IDReferencePOS} restaurant_code=${restaurant_code}`);
-
-          // Controlla duplicati usando IDReferencePOS + restaurant_code come chiave univoca
-          // Se il movimento esiste già per questo negozio, lo salta per evitare duplicati
-          const existingMovimento = await prisma.signaMovimenti.findFirst({
-            where: {
-              IDReferencePOS: movimento.IDReferencePOS?.toString() || "",
-              restaurant_code: restaurant_code,
-            }
-          });
-          
-          if (existingMovimento) {
-            console.log(`[${getItalianDateString()}] [SIGNA] SKIP duplicato: IDReferencePOS=${movimento.IDReferencePOS} già presente (id=${existingMovimento.id}).`);
-            //(restaurant_code, "warning", `⚠️ SIGNA SKIP duplicato: IDReferencePOS=${movimento.IDReferencePOS}`, { IDReferencePOS: movimento.IDReferencePOS, existingId: existingMovimento.id }, incomingPayload);
-            saltati++;
-            continue;
-          }
           
           // Cerca il Customer corrispondente tramite idCustomerProduct == customer.idCustomer
           // (idCustomer in Signa è l'ID interno del POS, equivalente a idCustomerProduct nel gateway)
@@ -442,33 +426,7 @@ async function processDataInBackground(
 
           const referenceCustomerId = resolvedCustomer.id;
           console.log(`[${getItalianDateString()}] [SIGNA] Customer trovato: id=${referenceCustomerId} (match via ${resolvedMatchType}).`);
-
-          await prisma.signaMovimenti.create({
-            data: {
-              payload: movimento,
-              idReferenceGateway: movimento.idReferenceGateway?.toString() || "",
-              IDReferencePOS: movimento.IDReferencePOS?.toString() || "",
-              CodAzienda: movimento.CodAzienda || "",
-              CodNegozio: movimento.CodNegozio || "",
-              CodCommesso: movimento.CodCommesso || "",
-              CodSconto: movimento.CodSconto || "",
-              MovimentoData: movimento.MovimentoData || "",
-              MovimentoOra: movimento.MovimentoOra || "",
-              MovimentoAnno: movimento.MovimentoAnno || 0,
-              VenditaWeb: movimento.VenditaWeb || false,
-              TaxFree: movimento.TaxFree || false,
-              Noleggiato: movimento.Noleggiato || false,
-              Fatturato: movimento.Fatturato || false,
-              restaurant_code,
-              subscriber_code: "SIGNA",
-              reference_customer: referenceCustomerId,
-              createdAt: new Date(),
-              updateAt: new Date(),
-            },
-          });
-          salvati++;
-          console.log(`[${getItalianDateString()}] [SIGNA] SignaMovimenti salvato: IDReferencePOS=${movimento.IDReferencePOS}.`);
-          //sendLog(restaurant_code, "success", `✅ SIGNA vendita salvata: IDReferencePOS=${movimento.IDReferencePOS} customer=${signaIdCustomer}`, { IDReferencePOS: movimento.IDReferencePOS, idCustomerProduct: signaIdCustomer, referenceCustomerId, dettagli: Array.isArray(movimento.dettagli) ? movimento.dettagli.length : 0 }, incomingPayload);
+          salvati++;  // movimento accettato, verranno processati i dettagli su CustomerOrdersFlat
 
           // Estrae i dati cliente annidati nel movimento (campo "customer")
           // per ricavare la contact_key e collegare i dettagli a CustomerOrdersFlat
