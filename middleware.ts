@@ -40,9 +40,6 @@ async function logUnauthorizedRequest(req: NextRequest, status: number, errorMsg
 }
 
 export async function middleware(req: NextRequest) {
-   if (process.env.NODE_ENV === 'development') {
-    return NextResponse.next();
-  }
   const origin = req.headers.get('origin');
 
   if (req.method === 'OPTIONS') {
