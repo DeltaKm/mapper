@@ -943,22 +943,25 @@ async function processDataInBackground(
                 resolvedCreationDate = existingCreationDateRaw;
               }
             }
-            console.log(`[DEBUG] Confronto: resolved="${resolvedCreationDate}" (${typeof resolvedCreationDate}), existingRaw="${existingCreationDateRaw}" (${typeof existingCreationDateRaw}), uguali=${resolvedCreationDate === existingCreationDateRaw}`);
             // Update immediato (prima delle guardie)
-            if (existing && resolvedCreationDate !== existingCreationDateRaw) {
-              try {
-                await prisma.customer.update({
-                  where: { id: existing.id },
-                  data: {   
-                    dateCreation: resolvedCreationDate,
-                    updateAt: new Date()
-                  }
-                });
-                console.log(`[${getItalianDateString()}] ✅ dateCreation aggiornata in anticipo per customer ${existing.id}: "${existingCreationDateRaw}" → "${resolvedCreationDate}"`);
-              } catch (updateError) {
-                console.error(`[${getItalianDateString()}] ❌ ERRORE aggiornamento anticipato dateCreation:`, updateError);
-              }
+           console.log(`[DEBUG] Prima dell'if: existing=${!!existing}, resolved="${resolvedCreationDate}", existingRaw="${existingCreationDateRaw}", condizione=${existing && resolvedCreationDate !== existingCreationDateRaw}`);
+          if (existing && resolvedCreationDate !== existingCreationDateRaw) {
+            console.log(`[${getItalianDateString()}] ⏳ Tentativo update...`);
+            try {
+              const updated = await prisma.customer.update({
+                where: { id: existing.id },
+                data: {
+                  dateCreation: resolvedCreationDate,
+                  updateAt: new Date()
+                }
+              });
+              console.log(`[${getItalianDateString()}] ✅ Aggiornato: "${existingCreationDateRaw}" → "${resolvedCreationDate}". Valore DB: ${updated.dateCreation}`);
+            } catch (e) {
+              console.error(`[${getItalianDateString()}] ❌ ERRORE:`, e);
             }
+          } else {
+            console.log(`[DEBUG] Condizione non soddisfatta.`);
+          }
 
 
           // ── LOG NUOVO CLIENTE ──────────────────────────────────────
