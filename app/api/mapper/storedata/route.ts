@@ -913,14 +913,52 @@ async function processDataInBackground(
           // (GUARDIA 1 o GUARDIA 2), la data di creazione più vecchia viene
           // comunque sempre preservata.
           // ─────────────────────────────────────────────────────────────────
-          const incomingCreationDateRaw = customer.dateCreationProduct || customer.dateCreation || "";
-          const existingCreationDateRaw = existing?.dateCreation || "";
-          console.log(`[DEBUG] Sto per risolvere dateCreation. existing=${!!existing}, incomingRaw="${incomingCreationDateRaw}", existingRaw="${existingCreationDateRaw}"`);
-          const resolvedCreationDate = resolveDateCreation(
-            incomingCreationDateRaw,
-            existingCreationDateRaw,
-            (msg) => console.log(`[${getItalianDateString()}] [CREATION_DATE] restaurant_code=${restaurant_code} idCustomer=${effectiveCustomerId || rawIdCustomerProduct || "?"} ${msg}`)
-          );
+            // ── RISOLUZIONE DATA DI CREAZIONE (versione self-contained con log espliciti) ──
+            const incomingCreationDateRaw = (customer.dateCreationProduct || customer.dateCreation || "").trim();
+            const existingCreationDateRaw = (existing?.dateCreation || "").trim();
+
+            let resolvedCreationDate: string;
+
+            if (!incomingCreationDateRaw) {
+              // Nessuna data in arrivo → teniamo quella esistente
+              resolvedCreationDate = existingCreationDateRaw;
+            } else {
+              const incomingMs = moment(incomingCreationDateRaw).valueOf();
+              const existingMs = existingCreationDateRaw ? moment(existingCreationDateRaw).valueOf() : 0;
+
+              if (isNaN(incomingMs)) {
+                // Data in arrivo non parsabile → teniamo esistente
+                console.log(`[${getItalianDateString()}] [CREATION_DATE] Incoming non parsabile: "${incomingCreationDateRaw}", mantenuto "${existingCreationDateRaw}"`);
+                resolvedCreationDate = existingCreationDateRaw;
+              } else if (!existingCreationDateRaw || isNaN(existingMs)) {
+                // Nessuna data esistente o non parsabile → usiamo in arrivo
+                console.log(`[${getItalianDateString()}] [CREATION_DATE] Existing assente/non parsabile, uso incoming: "${incomingCreationDateRaw}"`);
+                resolvedCreationDate = incomingCreationDateRaw;
+              } else if (incomingMs < existingMs) {
+                // In arrivo è più vecchia → aggiorniamo
+                console.log(`[${getItalianDateString()}] [CREATION_DATE] Aggiornamento: "${existingCreationDateRaw}" → "${incomingCreationDateRaw}" (data più vecchia ricevuta)`);
+                resolvedCreationDate = incomingCreationDateRaw;
+              } else {
+                // In arrivo è più recente o uguale → teniamo esistente
+                resolvedCreationDate = existingCreationDateRaw;
+              }
+            }
+
+            // Update immediato (prima delle guardie)
+            if (existing && resolvedCreationDate !== existingCreationDateRaw) {
+              try {
+                await prisma.customer.update({
+                  where: { id: existing.id },
+                  data: {
+                    dateCreation: resolvedCreationDate,
+                    updateAt: new Date()
+                  }
+                });
+                console.log(`[${getItalianDateString()}] ✅ dateCreation aggiornata in anticipo per customer ${existing.id}: "${existingCreationDateRaw}" → "${resolvedCreationDate}"`);
+              } catch (updateError) {
+                console.error(`[${getItalianDateString()}] ❌ ERRORE aggiornamento anticipato dateCreation:`, updateError);
+              }
+            }
 
           // Update immediato del solo campo dateCreation, prima di ogni guardia
           if (existing && resolvedCreationDate !== existing.dateCreation) {
