@@ -943,13 +943,13 @@ async function processDataInBackground(
                 resolvedCreationDate = existingCreationDateRaw;
               }
             }
-
+            console.log(`[DEBUG] Confronto: resolved="${resolvedCreationDate}" (${typeof resolvedCreationDate}), existingRaw="${existingCreationDateRaw}" (${typeof existingCreationDateRaw}), uguali=${resolvedCreationDate === existingCreationDateRaw}`);
             // Update immediato (prima delle guardie)
             if (existing && resolvedCreationDate !== existingCreationDateRaw) {
               try {
                 await prisma.customer.update({
                   where: { id: existing.id },
-                  data: {
+                  data: {   
                     dateCreation: resolvedCreationDate,
                     updateAt: new Date()
                   }
@@ -960,17 +960,6 @@ async function processDataInBackground(
               }
             }
 
-          // Update immediato del solo campo dateCreation, prima di ogni guardia
-          if (existing && resolvedCreationDate !== existing.dateCreation) {
-            await prisma.customer.update({
-              where: { id: existing.id },
-              data: {
-                dateCreation: resolvedCreationDate,
-                updateAt: new Date()
-              }
-            });
-            console.log(`[${getItalianDateString()}] dateCreation aggiornata in anticipo: "${existing.dateCreation}" → "${resolvedCreationDate}"`);
-          }
 
           // ── LOG NUOVO CLIENTE ──────────────────────────────────────
           if (!existing) {
