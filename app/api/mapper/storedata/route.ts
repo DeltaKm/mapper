@@ -737,6 +737,8 @@ async function processDataInBackground(
       let aggiornati = 0, creati = 0, saltati = 0, aggiornatiParziale = 0, errori = 0;
 
       for (const customer of body.customerList) {
+        // 🔍 DEBUG: stampa l'intero oggetto customer
+        console.log(`[${getItalianDateString()}] [DEBUG-CUSTOMER-PAYLOAD] customer=${JSON.stringify(customer)}`);
         try {
           // arrived_from indica la sorgente del cliente:
           //   "app"                      → cliente EasyAppear (ha sempre idCustomer/idCustomerExt)
@@ -902,6 +904,14 @@ async function processDataInBackground(
             }
           }
 
+          
+
+
+
+
+
+
+
           // ─────────────────────────────────────────────────────────────────
           // 🔧 RISOLUZIONE ANTICIPATA DELLA DATA DI CREAZIONE
           //
@@ -913,10 +923,12 @@ async function processDataInBackground(
           // (GUARDIA 1 o GUARDIA 2), la data di creazione più vecchia viene
           // comunque sempre preservata.
           // ─────────────────────────────────────────────────────────────────
-            // ── RISOLUZIONE DATA DI CREAZIONE (versione self-contained con log espliciti) ──
+            
+          
+          // ── RISOLUZIONE DATA DI CREAZIONE (versione self-contained con log espliciti) ──
             const incomingCreationDateRaw = (customer.dateCreationProduct || customer.dateCreation || "").trim();
             const existingCreationDateRaw = (existing?.dateCreation || "").trim();
-
+            console.log(`[DEBUG] incomingCreationDateRaw per customer ${effectiveCustomerId || rawIdCustomerProduct}: "${incomingCreationDateRaw}"`);
             let resolvedCreationDate: string;
 
             if (!incomingCreationDateRaw) {
@@ -944,7 +956,7 @@ async function processDataInBackground(
               }
             }
             // Update immediato (prima delle guardie)
-                   // ── UPDATE IMMEDIATO DI dateCreation (DEBUG ESTESO) ──
+            // ── UPDATE IMMEDIATO DI dateCreation (DEBUG ESTESO) ──
             console.log(`[DEBUG] Inizio blocco update immediato per customer ${existing?.id || 'NUOVO'}`);
 
             try {
@@ -972,6 +984,9 @@ async function processDataInBackground(
             } catch (error) {
               console.error(`[${getItalianDateString()}] ❌ ERRORE nel blocco update immediato:`, error);
             }
+
+
+          
 
 
           // ── LOG NUOVO CLIENTE ──────────────────────────────────────
