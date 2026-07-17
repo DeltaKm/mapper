@@ -3,6 +3,7 @@ import { Buffer } from "buffer";
 import prisma from "@/app/lib/prisma";
 import moment from "moment-timezone";
 import pLimit from "p-limit";
+import { resolveDateCreation } from "@/app/lib/services/customer/customer-date.service";
 
 // ─────────────────────────────────────────────────────────────
 // ENDPOINT PRINCIPALE DI INGESTION DATI
@@ -901,6 +902,17 @@ async function processDataInBackground(
             }
           }
 
+          // ── RISOLUZIONE dateCreation ────────────────────────────────
+          // Calcolata una sola volta qui, riusata sia in UPDATE che in CREATE più sotto.
+          const incomingCreationDateRaw = customer.dateCreationProduct || customer.dateCreation || "";
+          const existingCreationDateRaw = existing?.dateCreation || "";
+          const resolvedCreationDate = resolveDateCreation(
+            incomingCreationDateRaw,
+            existingCreationDateRaw,
+            (msg) => console.log(`[${getItalianDateString()}] [CREATION_DATE] restaurant_code=${restaurant_code} idCustomer=${effectiveCustomerId || rawIdCustomerProduct || "?"} ${msg}`)
+          );
+
+          
           // ── LOG NUOVO CLIENTE ──────────────────────────────────────
           if (!existing) {
             const idLabel = effectiveCustomerId || rawIdCustomerProduct || "(nessuno)";
@@ -992,7 +1004,7 @@ async function processDataInBackground(
               fidelity_card_number:           pick(customer.fidelity_card_number,           existing.fidelity_card_number),
               consent_marketing:              pick(customer.consent_marketing,              existing.consent_marketing),
               consent_third_parties_marketing:pick(customer.consent_third_parties_marketing,existing.consent_third_parties_marketing),
-              dateCreation:  existing.dateCreation || "",
+              dateCreation: resolvedCreationDate,
               dateLastUpdate: incomingLastUpdate || existing.dateLastUpdate || "",
               deleted:                        pick(customer.deleted,                        existing.deleted),
               restaurant_code,
@@ -1080,7 +1092,7 @@ async function processDataInBackground(
               fidelity_card_number: customer.fidelity_card_number || "",
               consent_marketing: customer.consent_marketing || "",
               consent_third_parties_marketing: customer.consent_third_parties_marketing || "",
-              dateCreation: customer.dateCreationProduct || customer.dateCreation || "",
+              dateCreation: resolvedCreationDate,
               dateLastUpdate: customer.dateLastUpdateProduct || customer.dateLastUpdate || "",
               deleted: customer.deleted || "",
               restaurant_code,
