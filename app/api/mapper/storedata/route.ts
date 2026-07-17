@@ -738,7 +738,6 @@ async function processDataInBackground(
 
       for (const customer of body.customerList) {
         // 🔍 DEBUG: stampa l'intero oggetto customer
-        console.log(`[${getItalianDateString()}] [DEBUG-CUSTOMER-PAYLOAD] customer=${JSON.stringify(customer)}`);
         try {
           // arrived_from indica la sorgente del cliente:
           //   "app"                      → cliente EasyAppear (ha sempre idCustomer/idCustomerExt)
@@ -960,30 +959,56 @@ async function processDataInBackground(
             console.log(`[DEBUG] Inizio blocco update immediato per customer ${existing?.id || 'NUOVO'}`);
 
             try {
-              console.log(`[DEBUG] Prima dell'if: existing=${!!existing}, resolved="${resolvedCreationDate}", existingRaw="${existingCreationDateRaw}", condizione=${existing && resolvedCreationDate !== existingCreationDateRaw}`);
+                console.log(`[DEBUG] Prima dell'if: existing=${!!existing}, resolved="${resolvedCreationDate}", existingRaw="${existingCreationDateRaw}", condizione=${existing && resolvedCreationDate !== existingCreationDateRaw}`);
 
-              if (existing && resolvedCreationDate !== existingCreationDateRaw) {
-                console.log(`[${getItalianDateString()}] ⏳ ENTRO nell'if – tentativo update...`);
-                
-                console.log(`[DEBUG] scrivo nel DB sul cliente ${existing?.id} la sua resolvedCrreationDate: ${resolvedCreationDate}`);
-                // Tentativo di update con log dettagliato
-                const updated = await prisma.customer.update({
-                  where: { id: existing.id },
-                  data: {
-                    dateCreation: resolvedCreationDate,
-                    updateAt: new Date()
+                if (existing && resolvedCreationDate !== existingCreationDateRaw) {
+                  console.log(`[${getItalianDateString()}] ⏳ ENTRO nell'if – tentativo update...`);
+                  console.log(`[DEBUG] scrivo nel DB sul cliente ${existing.id} la sua resolvedCreationDate: ${resolvedCreationDate}`);
+
+                  // Tentativo di update con log dettagliato
+                  let updated;
+                  try {
+                    updated = await prisma.customer.update({
+                      where: { id: existing.id },
+                      data: {
+                        dateCreation: resolvedCreationDate,
+                        updateAt: new Date()
+                      },
+                      select: { id: true, dateCreation: true, updateAt: true } // seleziona i campi per conferma
+                    });
+                    console.log(`[${getItalianDateString()}] ✅ Aggiornato: "${existingCreationDateRaw}" → "${resolvedCreationDate}". Oggetto restituito: ${JSON.stringify(updated)}`);
+                  } catch (updateError) {
+                    console.error(`[${getItalianDateString()}] ❌ ERRORE Prisma durante update:`, updateError);
+                    // Stampa anche lo stack per maggiori dettagli
+                    if (updateError instanceof Error) {
+                      console.error(`[DEBUG] Stack: ${updateError.stack}`);
+                    }
+                    // Non rilanciare: vogliamo proseguire per la verifica successiva
                   }
-                });
-                
-                console.log(`[${getItalianDateString()}] ✅ Aggiornato: "${existingCreationDateRaw}" → "${resolvedCreationDate}". Valore DB: ${updated.dateCreation}`);
-              } else {
-                console.log(`[DEBUG] Condizione non soddisfatta (o existing è null).`);
-              }
 
-              console.log(`[DEBUG] Uscito dal blocco if/else.`);
-            } catch (error) {
-              console.error(`[${getItalianDateString()}] ❌ ERRORE nel blocco update immediato:`, error);
-            }
+                  // Rileggo il record per sicurezza
+                  try {
+                    const verify = await prisma.customer.findUnique({
+                      where: { id: existing.id },
+                      select: { dateCreation: true }
+                    });
+                    console.log(`[${getItalianDateString()}] 🔍 Verifica post-update: dateCreation="${verify?.dateCreation}"`);
+                    if (verify?.dateCreation === resolvedCreationDate) {
+                      console.log(`[DEBUG] ✅ Verifica riuscita: il DB contiene il nuovo valore.`);
+                    } else {
+                      console.warn(`[DEBUG] ⚠️ Discrepanza: il DB contiene "${verify?.dateCreation}" invece di "${resolvedCreationDate}"`);
+                    }
+                  } catch (verifyError) {
+                    console.error(`[DEBUG] Errore durante la verifica:`, verifyError);
+                  }
+                } else {
+                  console.log(`[DEBUG] Condizione non soddisfatta (o existing è null).`);
+                }
+
+                console.log(`[DEBUG] Uscito dal blocco if/else.`);
+              } catch (error) {
+                console.error(`[${getItalianDateString()}] ❌ ERRORE nel blocco update immediato:`, error);
+              }
 
 
           
