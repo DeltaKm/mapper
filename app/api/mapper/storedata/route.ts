@@ -902,8 +902,17 @@ async function processDataInBackground(
             }
           }
 
-          // ── RISOLUZIONE dateCreation ────────────────────────────────
-          // Calcolata una sola volta qui, riusata sia in UPDATE che in CREATE più sotto.
+          // ─────────────────────────────────────────────────────────────────
+          // 🔧 RISOLUZIONE ANTICIPATA DELLA DATA DI CREAZIONE
+          //
+          // Viene eseguita DOPO la ricerca di "existing" (quindi con il valore
+          // reale del DB) e PRIMA di qualsiasi guardia. Se la data risolta è
+          // diversa da quella attualmente salvata, viene aggiornato immediatamente
+          // il solo campo dateCreation con un update mirato. In questo modo,
+          // anche se le guardie successive dovessero saltare l'update completo
+          // (GUARDIA 1 o GUARDIA 2), la data di creazione più vecchia viene
+          // comunque sempre preservata.
+          // ─────────────────────────────────────────────────────────────────
           const incomingCreationDateRaw = customer.dateCreationProduct || customer.dateCreation || "";
           const existingCreationDateRaw = existing?.dateCreation || "";
           const resolvedCreationDate = resolveDateCreation(
@@ -912,7 +921,18 @@ async function processDataInBackground(
             (msg) => console.log(`[${getItalianDateString()}] [CREATION_DATE] restaurant_code=${restaurant_code} idCustomer=${effectiveCustomerId || rawIdCustomerProduct || "?"} ${msg}`)
           );
 
-          
+          // Update immediato del solo campo dateCreation, prima di ogni guardia
+          if (existing && resolvedCreationDate !== existing.dateCreation) {
+            await prisma.customer.update({
+              where: { id: existing.id },
+              data: {
+                dateCreation: resolvedCreationDate,
+                updateAt: new Date()
+              }
+            });
+            console.log(`[${getItalianDateString()}] dateCreation aggiornata in anticipo: "${existing.dateCreation}" → "${resolvedCreationDate}"`);
+          }
+
           // ── LOG NUOVO CLIENTE ──────────────────────────────────────
           if (!existing) {
             const idLabel = effectiveCustomerId || rawIdCustomerProduct || "(nessuno)";
@@ -1062,6 +1082,7 @@ async function processDataInBackground(
           } else {
             // ── CREATE ──────────────────────────────────────────────
             // Cliente non trovato nel DB → creazione nuovo record.
+            // resolvedCreationDate è già disponibile grazie alla risoluzione fatta sopra.
             const filteredCustomerData = {
               idReferenceGateway: customer.idReferenceGateway || "",
               idCustomer: effectiveCustomerId || rawIdCustomerProduct,
