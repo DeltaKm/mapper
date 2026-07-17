@@ -953,6 +953,7 @@ async function processDataInBackground(
               if (existing && resolvedCreationDate !== existingCreationDateRaw) {
                 console.log(`[${getItalianDateString()}] ⏳ ENTRO nell'if – tentativo update...`);
                 
+                console.log(`[DEBUG] scrivo nel DB sul cliente ${existing?.id} la sua resolvedCrreationDate: ${resolvedCreationDate}`);
                 // Tentativo di update con log dettagliato
                 const updated = await prisma.customer.update({
                   where: { id: existing.id },
