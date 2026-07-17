@@ -915,6 +915,7 @@ async function processDataInBackground(
           // ─────────────────────────────────────────────────────────────────
           const incomingCreationDateRaw = customer.dateCreationProduct || customer.dateCreation || "";
           const existingCreationDateRaw = existing?.dateCreation || "";
+          console.log(`[DEBUG] Sto per risolvere dateCreation. existing=${!!existing}, incomingRaw="${incomingCreationDateRaw}", existingRaw="${existingCreationDateRaw}"`);
           const resolvedCreationDate = resolveDateCreation(
             incomingCreationDateRaw,
             existingCreationDateRaw,
