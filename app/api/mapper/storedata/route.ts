@@ -922,93 +922,28 @@ async function processDataInBackground(
           // (GUARDIA 1 o GUARDIA 2), la data di creazione più vecchia viene
           // comunque sempre preservata.
           // ─────────────────────────────────────────────────────────────────
-            
-          
-          // ── RISOLUZIONE DATA DI CREAZIONE (versione self-contained con log espliciti) ──
             const incomingCreationDateRaw = (customer.dateCreationProduct || customer.dateCreation || "").trim();
             const existingCreationDateRaw = (existing?.dateCreation || "").trim();
-            console.log(`[DEBUG] incomingCreationDateRaw per customer ${effectiveCustomerId || rawIdCustomerProduct}: "${incomingCreationDateRaw}"`);
-            let resolvedCreationDate: string;
 
-            if (!incomingCreationDateRaw) {
-              // Nessuna data in arrivo → teniamo quella esistente
-              resolvedCreationDate = existingCreationDateRaw;
-            } else {
-              const incomingMs = moment(incomingCreationDateRaw).valueOf();
-              const existingMs = existingCreationDateRaw ? moment(existingCreationDateRaw).valueOf() : 0;
+            const resolvedCreationDate = resolveDateCreation(
+              incomingCreationDateRaw,
+              existingCreationDateRaw,
+              (msg) => console.log(`[${getItalianDateString()}] [CREATION_DATE] ${msg}`)
+            );
 
-              if (isNaN(incomingMs)) {
-                // Data in arrivo non parsabile → teniamo esistente
-                console.log(`[${getItalianDateString()}] [CREATION_DATE] Incoming non parsabile: "${incomingCreationDateRaw}", mantenuto "${existingCreationDateRaw}"`);
-                resolvedCreationDate = existingCreationDateRaw;
-              } else if (!existingCreationDateRaw || isNaN(existingMs)) {
-                // Nessuna data esistente o non parsabile → usiamo in arrivo
-                console.log(`[${getItalianDateString()}] [CREATION_DATE] Existing assente/non parsabile, uso incoming: "${incomingCreationDateRaw}"`);
-                resolvedCreationDate = incomingCreationDateRaw;
-              } else if (incomingMs < existingMs) {
-                // In arrivo è più vecchia → aggiorniamo
-                console.log(`[${getItalianDateString()}] [CREATION_DATE] Aggiornamento: "${existingCreationDateRaw}" → "${incomingCreationDateRaw}" (data più vecchia ricevuta)`);
-                resolvedCreationDate = incomingCreationDateRaw;
-              } else {
-                // In arrivo è più recente o uguale → teniamo esistente
-                resolvedCreationDate = existingCreationDateRaw;
+            if (existing && resolvedCreationDate !== existingCreationDateRaw) {
+              try {
+                await prisma.customer.update({
+                  where: { id: existing.id },
+                  data: {
+                    dateCreation: resolvedCreationDate,
+                    updateAt: new Date(),
+                  },
+                });
+              } catch (updateError) {
+                console.error(`[${getItalianDateString()}] Errore update dateCreation per customer ${existing.id}:`, updateError);
               }
             }
-            // Update immediato (prima delle guardie)
-            // ── UPDATE IMMEDIATO DI dateCreation (DEBUG ESTESO) ──
-            console.log(`[DEBUG] Inizio blocco update immediato per customer ${existing?.id || 'NUOVO'}`);
-
-            try {
-                console.log(`[DEBUG] Prima dell'if: existing=${!!existing}, resolved="${resolvedCreationDate}", existingRaw="${existingCreationDateRaw}", condizione=${existing && resolvedCreationDate !== existingCreationDateRaw}`);
-
-                if (existing && resolvedCreationDate !== existingCreationDateRaw) {
-                  console.log(`[${getItalianDateString()}] ⏳ ENTRO nell'if – tentativo update...`);
-                  console.log(`[DEBUG] scrivo nel DB sul cliente ${existing.id} la sua resolvedCreationDate: ${resolvedCreationDate}`);
-
-                  // Tentativo di update con log dettagliato
-                  let updated;
-                  try {
-                    updated = await prisma.customer.update({
-                      where: { id: existing.id },
-                      data: {
-                        dateCreation: resolvedCreationDate,
-                        updateAt: new Date()
-                      },
-                      select: { id: true, dateCreation: true, updateAt: true } // seleziona i campi per conferma
-                    });
-                    console.log(`[${getItalianDateString()}] ✅ Aggiornato: "${existingCreationDateRaw}" → "${resolvedCreationDate}". Oggetto restituito: ${JSON.stringify(updated)}`);
-                  } catch (updateError) {
-                    console.error(`[${getItalianDateString()}] ❌ ERRORE Prisma durante update:`, updateError);
-                    // Stampa anche lo stack per maggiori dettagli
-                    if (updateError instanceof Error) {
-                      console.error(`[DEBUG] Stack: ${updateError.stack}`);
-                    }
-                    // Non rilanciare: vogliamo proseguire per la verifica successiva
-                  }
-
-                  // Rileggo il record per sicurezza
-                  try {
-                    const verify = await prisma.customer.findUnique({
-                      where: { id: existing.id },
-                      select: { dateCreation: true }
-                    });
-                    console.log(`[${getItalianDateString()}] 🔍 Verifica post-update: dateCreation="${verify?.dateCreation}"`);
-                    if (verify?.dateCreation === resolvedCreationDate) {
-                      console.log(`[DEBUG] ✅ Verifica riuscita: il DB contiene il nuovo valore.`);
-                    } else {
-                      console.warn(`[DEBUG] ⚠️ Discrepanza: il DB contiene "${verify?.dateCreation}" invece di "${resolvedCreationDate}"`);
-                    }
-                  } catch (verifyError) {
-                    console.error(`[DEBUG] Errore durante la verifica:`, verifyError);
-                  }
-                } else {
-                  console.log(`[DEBUG] Condizione non soddisfatta (o existing è null).`);
-                }
-
-                console.log(`[DEBUG] Uscito dal blocco if/else.`);
-              } catch (error) {
-                console.error(`[${getItalianDateString()}] ❌ ERRORE nel blocco update immediato:`, error);
-              }
 
 
           
